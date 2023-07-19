@@ -1,26 +1,67 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const Token = union(enum) {
+inline fn parseExpr(comptime buffer: []const u8) ExprNode {
+    comptime return parseExprImpl(dedupeSlice(u8, buffer));
+}
+fn parseExprImpl(comptime buffer: []const u8) ExprNode {
+    var current: ?ExprNode = null;
+
+    var op_stack: []const Operator = &.{};
+    _ = op_stack;
+
+    var tokenizer = Tokenizer{};
+    while (tokenizer.next(buffer)) |tok| {
+        switch (tok) {
+            inline .ident, .integer, .char, .float => |val, tag| {
+                const old = current orelse {
+                    current = @unionInit(ExprNode, @tagName(tag), val);
+                    continue;
+                };
+                _ = old;
+            },
+            .op => |op| {
+                _ = op;
+            },
+            .comma => {},
+            .paren_open => {},
+            .paren_close => {},
+            .bracket_open => {},
+            .bracket_close => {},
+        }
+    }
+}
+
+const ExprNode = union(enum) {
     ident: []const u8,
     integer: comptime_int,
     char: comptime_int,
     float: []const u8,
-    op: Operator,
+    un_op: UnaryOp,
+    bin_op: BinaryOp,
+    idx_access: IndexAccess,
+    func_call: FuncCall,
 
-    /// ','
-    comma,
-    /// '('
-    paren_open,
-    /// ')'
-    paren_close,
-    /// '['
-    bracket_open,
-    /// ']'
-    bracket_close,
+    const UnaryOp = struct {
+        op: Operator,
+        val: *const ExprNode,
+    };
+    const BinaryOp = struct {
+        lhs: *const ExprNode,
+        op: Operator,
+        rhs: *const ExprNode,
+    };
+    const IndexAccess = struct {
+        indexee: *const ExprNode,
+        indexer: *const ExprNode,
+    };
+    const FuncCall = struct {
+        callee: *const ExprNode,
+        args: []const ExprNode,
+    };
 };
 
-pub const Operator = enum {
+const Operator = enum {
     @".",
 
     @"^",
@@ -43,6 +84,25 @@ pub const Operator = enum {
     @">",
     @"<=",
     @">=",
+};
+
+const Token = union(enum) {
+    ident: []const u8,
+    integer: comptime_int,
+    char: comptime_int,
+    float: []const u8,
+    op: Operator,
+
+    /// ','
+    comma,
+    /// '('
+    paren_open,
+    /// ')'
+    paren_close,
+    /// '['
+    bracket_open,
+    /// ']'
+    bracket_close,
 };
 
 const Tokenizer = struct {
