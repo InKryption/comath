@@ -1,157 +1,186 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-fn tokenizeExpr(comptime expr_str: []const u8) []const Token {
-    if (dedupeSlice(u8, expr_str) != expr_str.ptr) {
-        return tokenizeExpr(dedupeSlice(u8, expr_str));
-    }
-
-    var tokens: []const Token = &.{};
-
-    @setEvalBranchQuota(expr_str.len * 1000);
-    var i = 0;
-    while (i < expr_str.len) switch (expr_str.ptr[i]) {
-        ' ', '\t', '\n', '\r' => i += 1,
-        '(' => {
-            tokens = tokens ++ &[_]Token{.paren_open};
-            i += 1;
-        },
-        ')' => {
-            tokens = tokens ++ &[_]Token{.paren_close};
-            i += 1;
-        },
-        '.' => {
-            tokens = tokens ++ &[_]Token{.period};
-            i += 1;
-        },
-        '\'' => {
-            const start = i;
-            i += 1;
-            const end = while (std.mem.indexOfScalarPos(u8, expr_str, i, '\'')) |end| {
-                i = end + 1;
-                switch (expr_str[end - 1]) {
-                    '\\' => continue,
-                    '\'' => @compileError("Empty character literal in '" ++ expr_str ++ "'"),
-                    else => {},
-                }
-                break i;
-            } else @compileError("Unclosed character literal in '" ++ expr_str ++ "'");
-
-            const char_src = expr_str[start..end];
-            const codepoint = switch (std.zig.parseCharLiteral(char_src)) {
-                .success => |codepoint| codepoint,
-                .failure => |failure| handleStringParseFailure(char_src, failure),
-            };
-            tokens = tokens ++ &[_]Token{.{ .char_literal = codepoint }};
-        },
-        '0'...'9' => {
-            const token = blk: {
-                var tokenizer = std.zig.Tokenizer.init(expr_str ++ &[_:0]u8{});
-                tokenizer.index = i;
-                break :blk tokenizer.next();
-            };
-
-            switch (token.tag) {
-                .number_literal => {},
-                else => @compileError( //
-                    "Unexpected tag '" ++ @tagName(token.tag) ++
-                    "' from '" ++ expr_str[token.loc.start..token.loc.end] //
-                ),
-            }
-
-            const num_src = expr_str[token.loc.start..token.loc.end];
-            const val = switch (std.zig.parseNumberLiteral(num_src)) {
-                .int => |int| Token{ .integer = int },
-                .big_int => |base| blk: {
-                    const digits = num_src[if (base != .decimal) 2 else 0..].*;
-                    const int = parseComptimeIntDigits(@intFromEnum(base), digits) catch |err| @compileError(std.fmt.comptimePrint(
-                        "Encountered '{s}' in '{s}' while parsing integer",
-                        .{ @errorName(err), num_src },
-                    ));
-                    break :blk Token{ .integer = int };
-                },
-                .float => Token{ .float = std.fmt.parseFloat(f128, num_src) catch |err| switch (err) {
-                    error.InvalidCharacter => |e| @compileError(@errorName(e) ++ " in '" ++ num_src ++ "' while parsing float"),
-                } },
-                .failure => |failure| handleNumberParseFailure(num_src, failure),
-            };
-            tokens = tokens ++ &[_]Token{val};
-            i = token.loc.end;
-        },
-        else => {
-            const start = i;
-
-            const remaining = expr_str[start..].*;
-            const remain_vec: @Vector(remaining.len, u8) = remaining;
-
-            var trues: @Vector(remaining.len, bool) = .{false} ** remaining.len;
-
-            // use SIMD to avoid needing too much eval branch quota
-            const excluded_chars = [_]u8{ ' ', '\t', '\n', '\r', '_', '(', ')', '\'', '\"', ',', '.' };
-            @setEvalBranchQuota(excluded_chars.len * 10);
-            for (excluded_chars) |excluded| {
-                const excluded_vec = @splat(remaining.len, excluded);
-                const prev_bits: @Vector(remaining.len, u1) = @bitCast(trues);
-                const current_bits: @Vector(remaining.len, u1) = @bitCast(remain_vec == excluded_vec);
-                trues = @bitCast(prev_bits | current_bits);
-            }
-            const first_true: comptime_int = std.simd.firstTrue(trues) orelse remaining.len;
-            tokens = tokens ++ &[_]Token{.{ .other = expr_str[start..][0..first_true] }};
-            i += first_true;
-        },
-    };
-
-    return tokens;
-}
-
-test tokenizeExpr {
-    try comptime std.testing.expectEqualDeep(
-        tokenizeExpr("3"),
-        &[_]Token{.{ .integer = 3 }},
-    );
-    try comptime std.testing.expectEqualDeep(
-        tokenizeExpr("7.1234"),
-        &[_]Token{.{ .float = 7.1234 }},
-    );
-    try comptime std.testing.expectEqualDeep(
-        tokenizeExpr("7.1234 / 2"),
-        &[_]Token{
-            .{ .float = 7.1234 },
-            .{ .other = "/" },
-            .{ .integer = 2 },
-        },
-    );
-
-    {
-        const expected_tokens = tokenizeExpr("foo(7.1234 / 2)");
-        try comptime std.testing.expectEqualDeep(
-            expected_tokens,
-            &[_]Token{
-                .{ .other = "foo" },
-                .paren_open,
-                .{ .float = 7.1234 },
-                .{ .other = "/" },
-                .{ .integer = 2 },
-                .paren_close,
-            },
-        );
-        try comptime std.testing.expectEqualDeep(
-            expected_tokens,
-            tokenizeExpr("foo ( 7.1234/ 2)"),
-        );
-    }
-}
-
 const Token = union(enum) {
-    paren_open,
-    paren_close,
-    comma,
-    period,
-    char_literal: comptime_int,
+    ident: []const u8,
     integer: comptime_int,
-    float: comptime_float,
-    other: []const u8,
+    char: comptime_int,
+    float: []const u8,
+    op: Operator,
+
+    /// ','
+    comma,
+    /// '('
+    paren_open,
+    /// ')'
+    paren_close,
+    /// '['
+    bracket_open,
+    /// ']'
+    bracket_close,
 };
+
+pub const Operator = enum {
+    @".",
+
+    @"^",
+    @"|",
+    @"&",
+
+    @"+",
+    @"-",
+    @"*",
+    @"/",
+    @"%",
+
+    @"++",
+    @"**",
+
+    @"!",
+    @"==",
+    @"!=",
+    @"<",
+    @">",
+    @"<=",
+    @">=",
+};
+
+const Tokenizer = struct {
+    index: comptime_int = 0,
+
+    inline fn next(comptime state: *Tokenizer, comptime buffer: []const u8) ?Token {
+        comptime return state.nextImpl(buffer);
+    }
+
+    fn nextImpl(comptime tokenizer: *Tokenizer, comptime buffer: []const u8) ?Token {
+        while (tokenizer.index < buffer.len) switch (buffer[tokenizer.index]) {
+            ' ', '\t', '\n', '\r' => {
+                tokenizer.index += 1;
+                continue;
+            },
+            '(' => {
+                tokenizer.index += 1;
+                return .paren_open;
+            },
+            ')' => {
+                tokenizer.index += 1;
+                return .paren_close;
+            },
+            '[' => {
+                tokenizer.index += 1;
+                return .bracket_open;
+            },
+            ']' => {
+                tokenizer.index += 1;
+                return .bracket_close;
+            },
+            ',' => {
+                tokenizer.index += 1;
+                return .comma;
+            },
+            'a'...'z',
+            'A'...'Z',
+            '_',
+            => {
+                const start = tokenizer.index;
+                const end = indexOfNonePosComptime(u8, buffer, tokenizer.index + 1, //
+                    "ABCDEFGHIJKLMNOPQRSTUVWXYZ" ++ //
+                    "abcdefghijklmnopqrstuvwxyz" ++ //
+                    "0123456789" ++ "_" //
+                ) orelse buffer.len;
+
+                const ident = buffer[start..end];
+                tokenizer.index += ident.len;
+
+                return Token{ .ident = ident };
+            },
+            '0'...'9', '\'' => {
+                @setEvalBranchQuota(@min(std.math.maxInt(u32), buffer.len - tokenizer.index));
+                var zig_tokenizer = std.zig.Tokenizer.init(buffer ++ &[_:0]u8{});
+                zig_tokenizer.index = tokenizer.index;
+                const tok = zig_tokenizer.next();
+
+                const literal_src = buffer[tok.loc.start..tok.loc.end];
+                assert(literal_src.len != 0);
+                tokenizer.index += literal_src.len;
+
+                const literal_tok: Token = switch (tok.tag) {
+                    .char_literal => Token{ .char = parseCharLiteral(literal_src[0..].*) },
+                    .number_literal => switch (std.zig.parseNumberLiteral(literal_src)) {
+                        .int => |int| Token{ .integer = int },
+                        .big_int => |base| Token{ .integer = blk: {
+                            const digits = literal_src[if (base == .decimal) 0 else 2..].*;
+                            break :blk parseComptimeIntDigits(@intFromEnum(base), digits) catch |err| @compileError(
+                                "Encountered '" ++ @errorName(err) ++ "' while parsing '" ++ literal_src ++ "'",
+                            );
+                        } },
+                        .float => Token{ .float = literal_src },
+                        .failure => |failure| handleNumberParseFailure(literal_src, failure),
+                    },
+                    else => @compileError( //
+                        "Unexpected token '" ++ literal_src ++ //
+                        "' with tag '" ++ @tagName(tok.tag) ++ "'" //
+                    ),
+                };
+                return literal_tok;
+            },
+            else => |c| {
+                if (!containsComptime(u8, enumTagNameCharSet(Operator), c)) @compileError(
+                    std.fmt.comptimePrint("Unexpected character '{'}'", .{std.zig.fmtEscapes(&.{c})}),
+                );
+                const start = tokenizer.index;
+                @setEvalBranchQuota(@min(std.math.maxInt(u32), (buffer.len - tokenizer.index) * 100));
+                const end = indexOfNonePosComptime(
+                    u8,
+                    buffer,
+                    start,
+                    enumTagNameCharSet(Operator),
+                ) orelse buffer.len;
+                const str = buffer[start..end];
+                tokenizer.index += str.len;
+                const op = std.meta.stringToEnum(Operator, str) orelse
+                    @compileError("Unexpected token '" ++ str ++ "'");
+                return Token{ .op = op };
+            },
+        };
+        return null;
+    }
+};
+
+fn testTokenizer(comptime buffer: []const u8, comptime expected: []const ?Token) !void {
+    comptime var tokenizer = Tokenizer{};
+    inline for (expected) |tok| {
+        try std.testing.expectEqualDeep(tok, tokenizer.next(buffer));
+    }
+}
+
+test Tokenizer {
+    try testTokenizer(
+        \\3.0   +    3     -
+        \\!     (    'a'   )
+        \\]     [    /     *
+        \\++    **   ==    !=
+        \\<     >    <=    >=
+        \\^     |    &     a_b_C
+    , &.{
+        .{ .float = "3.0" },      .{ .op = .@"+" },        .{ .integer = 3 }, .{ .op = .@"-" },
+        .{ .op = .@"!" },         .{ .paren_open = {} },   .{ .char = 'a' },  .{ .paren_close = {} },
+        .{ .bracket_close = {} }, .{ .bracket_open = {} }, .{ .op = .@"/" },  .{ .op = .@"*" },
+        .{ .op = .@"++" },        .{ .op = .@"**" },       .{ .op = .@"==" }, .{ .op = .@"!=" },
+        .{ .op = .@"<" },         .{ .op = .@">" },        .{ .op = .@"<=" }, .{ .op = .@">=" },
+        .{ .op = .@"^" },         .{ .op = .@"|" },        .{ .op = .@"&" },  .{ .ident = "a_b_C" },
+        null,
+    });
+    try testTokenizer("foo(3, 4.1)", &.{
+        .{ .ident = "foo" },
+        .{ .paren_open = {} },
+        .{ .integer = 3 },
+        .{ .comma = {} },
+        .{ .float = "4.1" },
+        .{ .paren_close = {} },
+        null,
+    });
+}
 
 inline fn handleStringParseFailure(char_src: []const u8, failure: std.zig.string_literal.Error) noreturn {
     switch (failure) {
@@ -217,6 +246,17 @@ inline fn handleNumberParseFailure(num_src: []const u8, failure: std.zig.number_
     }
 }
 
+inline fn parseCharLiteral(comptime char_src: anytype) comptime_int {
+    assert(@TypeOf(char_src) == [char_src.len]u8);
+    assert('\'' == char_src[0]);
+    assert('\'' == char_src[char_src.len - 1]);
+    if (char_src.len < 3) @compileError("Invalid empty character '" ++ &char_src ++ "'");
+    return switch (std.zig.parseCharLiteral(&char_src)) {
+        .success => |codepoint| codepoint,
+        .failure => |failure| handleStringParseFailure(&char_src, failure),
+    };
+}
+
 inline fn parseComptimeIntDigits(
     comptime base: u8,
     comptime digits: anytype,
@@ -232,41 +272,105 @@ inline fn parseComptimeIntDigits(
     return x;
 }
 
-inline fn dedupeSliceSlice(
-    comptime T: type,
-    comptime slices: []const []const T,
-) *const [slices.len][]const T {
-    comptime return dedupeSliceSliceImpl(T, slices[0..].*, false);
-}
-fn dedupeSliceSliceImpl(
-    comptime T: type,
-    comptime array: anytype,
-    comptime checked: bool,
-) *const [array.len][]const T {
-    const Array = @TypeOf(array);
-    comptime assert(Array == [array.len]@typeInfo(Array).Array.child);
-    if (checked) return &array;
-
-    var must_dedupe = false;
-    var result = array;
-    for (&result) |*item| {
-        if (dedupeSlice(T, item.*) == item.*.ptr) continue;
-        must_dedupe = true;
-        item.* = dedupeSlice(T, item.*);
+const containsComptime = struct {
+    inline fn containsComptime(
+        comptime T: type,
+        comptime haystack: []const T,
+        comptime needle: T,
+    ) bool {
+        comptime return containsComptimeImpl(
+            T,
+            dedupeSlice(T, haystack),
+            needle,
+        );
     }
-
-    if (must_dedupe)
-        return dedupeSliceSliceImpl(T, result, true);
-    return &result;
-}
-
-inline fn dedupeSlice(comptime T: type, comptime slice: []const T) *const [slice.len]T {
-    comptime return dedupeSliceImpl(slice[0..].*);
-}
-noinline fn dedupeSliceImpl(comptime array: anytype) *const [array.len]@typeInfo(@TypeOf(array)).Array.child {
-    comptime {
-        const Array = @TypeOf(array);
-        assert(Array == [array.len]@typeInfo(Array).Array.child);
-        return &array;
+    fn containsComptimeImpl(
+        comptime T: type,
+        comptime haystack: []const T,
+        comptime needle: T,
+    ) bool {
+        comptime {
+            const needle_vec = @splat(haystack.len, needle);
+            return @reduce(.Or, haystack[0..].* == needle_vec);
+        }
     }
+}.containsComptime;
+
+const enumTagNameCharSet = struct {
+    inline fn enumTagNameCharSet(comptime E: type) *const [enumTagNameCharSetImpl(E).len]u8 {
+        comptime return enumTagNameCharSetImpl(E)[0..];
+    }
+    fn enumTagNameCharSetImpl(comptime E: type) []const u8 {
+        comptime {
+            var chars: []const u8 = "";
+            var set = std.bit_set.IntegerBitSet(std.math.maxInt(u8)).initEmpty();
+
+            for (@typeInfo(E).Enum.fields) |field| {
+                for (field.name) |c| {
+                    if (set.isSet(c)) continue;
+                    set.set(c);
+                    chars = chars ++ &[_]u8{c};
+                }
+            }
+
+            return chars;
+        }
+    }
+}.enumTagNameCharSet;
+
+inline fn indexOfNonePosComptime(
+    comptime T: type,
+    comptime haystack: []const T,
+    comptime start: comptime_int,
+    comptime excluded: []const T,
+) ?comptime_int {
+    const offs = indexOfNoneComptime(T, haystack[start..], excluded) orelse
+        return null;
+    return start + offs;
 }
+const indexOfNoneComptime = struct {
+    fn indexOfNoneComptime(
+        comptime T: type,
+        comptime haystack: []const T,
+        comptime excluded: []const T,
+    ) ?comptime_int {
+        const dd_hs = dedupeSlice(T, haystack);
+        const dd_ex = dedupeSlice(T, excluded);
+        return indexOfNoneComptimeImpl(T, dd_hs, dd_ex);
+    }
+    fn indexOfNoneComptimeImpl(
+        comptime T: type,
+        comptime haystack: []const T,
+        comptime excluded: []const T,
+    ) ?comptime_int {
+        assert(excluded.len != 0);
+        if (haystack.len == 0) return null;
+
+        const arr = haystack[0..].*;
+        const vec: @Vector(arr.len, T) = arr;
+
+        var trues: @Vector(arr.len, bool) = .{true} ** arr.len;
+        @setEvalBranchQuota(@min(std.math.maxInt(u32), excluded.len + 1));
+        for (excluded) |ex| {
+            const ex_vec = @splat(arr.len, ex);
+            const prev: @Vector(arr.len, u1) = @bitCast(trues);
+            const current: @Vector(arr.len, u1) = @bitCast(ex_vec != vec);
+            trues = @bitCast(prev & current);
+        }
+
+        return std.simd.firstTrue(trues) orelse return null;
+    }
+}.indexOfNoneComptime;
+
+const dedupeSlice = struct {
+    inline fn dedupeSlice(comptime T: type, comptime slice: []const T) *const [slice.len]T {
+        comptime return dedupeSliceImpl(slice[0..].*);
+    }
+    fn dedupeSliceImpl(comptime array: anytype) *const [array.len]@typeInfo(@TypeOf(array)).Array.child {
+        comptime {
+            const Array = @TypeOf(array);
+            assert(Array == [array.len]@typeInfo(Array).Array.child);
+            return &array;
+        }
+    }
+}.dedupeSlice;
