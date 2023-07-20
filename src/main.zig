@@ -13,7 +13,7 @@ fn parseExprImpl(comptime buffer: []const u8) ExprNode {
     var tokenizer = Tokenizer{};
     while (tokenizer.next(buffer)) |tok| {
         switch (tok) {
-            inline .ident, .integer, .char, .float => |val, tag| {
+            inline .ident, .integer, .char, .float, .grouped => |val, tag| {
                 const old = current orelse {
                     current = @unionInit(ExprNode, @tagName(tag), val);
                     continue;
@@ -41,6 +41,7 @@ const ExprNode = union(enum) {
     bin_op: BinaryOp,
     idx_access: IndexAccess,
     func_call: FuncCall,
+    grouped: *const ExprNode,
 
     const UnaryOp = struct {
         op: Operator,
