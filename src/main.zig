@@ -40,14 +40,35 @@ inline fn parseExpr(comptime expr: []const u8) ExprUnion {
 }
 
 test parseExpr {
-    @compileLog(parseExpr("3 +"));
+    @compileLog(parseExpr("(3 + a)").group);
 }
+
+fn binOp(
+    comptime lhs: ExprUnion,
+    comptime op: Operator,
+    comptime rhs: ExprUnion,
+) ExprUnion {
+    return .{ .bin_op = .{
+        .lhs = &lhs,
+        .op = op,
+        .rhs = &rhs,
+    } };
+}
+fn unOp(comptime op: Operator, comptime val: ExprUnion) ExprUnion {
+    return .{ .un_op = .{
+        .op = op,
+        .val = &val,
+    } };
+}
+
+const NestType = enum { paren, bracket };
 
 fn parseExprImpl(
     comptime expr: []const u8,
 ) ExprUnion {
     if (!@inComptime()) comptime unreachable;
     comptime {
+        var stack: BoundedPackedStack(128, NestType) = .{};
         var result: ExprUnion = .null;
         var tokenizer = Tokenizer{};
         while (tokenizer.next(expr)) |tok| {
@@ -67,21 +88,14 @@ fn parseExprImpl(
                         },
                         .bin_op => |bin_op| switch (bin_op.rhs.*) {
                             .null => {
-                                result = .{ .bin_op = .{
-                                    .lhs = bin_op.lhs,
-                                    .op = bin_op.op,
-                                    .rhs = &new_node,
-                                } };
+                                result = binOp(bin_op.lhs.*, bin_op.op, new_node);
                                 continue;
                             },
                             else => {},
                         },
                         .un_op => |un_op| switch (un_op.val.*) {
                             .null => {
-                                result = .{ .un_op = .{
-                                    .op = un_op.op,
-                                    .val = &new_node,
-                                } };
+                                result = unOp(un_op.op, new_node);
                                 continue;
                             },
                             else => {},
@@ -114,41 +128,20 @@ fn parseExprImpl(
                         .accessed = &res_copy,
                         .accessor = field,
                     } },
-                    .bin_op => |bin_op| result = .{ .bin_op = .{
-                        .lhs = bin_op.lhs,
-                        .op = bin_op.op,
-                        .rhs = &ExprUnion{
-                            .field_access = .{
-                                .accessed = bin_op.rhs,
-                                .accessor = field,
-                            },
-                        },
-                    } },
-                    .un_op => |un_op| result = .{ .un_op = .{
-                        .op = un_op.op,
-                        .val = &ExprUnion{
-                            .field_access = .{
-                                .accessed = un_op.val,
-                                .accessor = field,
-                            },
-                        },
-                    } },
+                    .bin_op => |bin_op| result = binOp(bin_op.lhs.*, bin_op.op, .{ .field_access = .{
+                        .accessed = &(bin_op.rhs.*),
+                        .accessor = field,
+                    } }),
+                    .un_op => |un_op| result = unOp(un_op.op, .{ .field_access = .{
+                        .accessed = &(un_op.val.*),
+                        .accessor = field,
+                    } }),
                 },
 
                 .bin_op, .un_op => |op| switch (res_copy) {
-                    .null => result = .{ .un_op = .{
-                        .op = op,
-                        .val = &ExprUnion{ .null = {} },
-                    } },
+                    .null => result = unOp(op, .null),
                     .bin_op => |bin_op| switch (bin_op.rhs.*) {
-                        .null => result = .{ .bin_op = .{
-                            .lhs = bin_op.lhs,
-                            .op = bin_op.op,
-                            .rhs = &ExprUnion{ .un_op = .{
-                                .op = op,
-                                .val = &ExprUnion{ .null = {} },
-                            } },
-                        } },
+                        .null => result = binOp(bin_op.lhs.*, bin_op.op, .{ .un_op = unOp(op, .null) }),
                         else => @compileError("TODO: " ++ @tagName(res_copy)),
                     },
                     .ident,
@@ -158,14 +151,28 @@ fn parseExprImpl(
                     .group,
                     .field_access,
                     .un_op,
-                    => result = .{ .bin_op = .{
-                        .lhs = &res_copy,
-                        .op = op,
-                        .rhs = &ExprUnion{ .null = {} },
-                    } },
+                    => result = binOp(res_copy, op, .null),
                 },
-                .paren_open => @compileError("TODO: " ++ @tagName(res_copy)),
-                .paren_close => @compileError("TODO: " ++ @tagName(res_copy)),
+                .paren_open => {
+                    stack.push(.paren) catch @compileError("Nesting is too deep");
+                    switch (result) {
+                        .null => {},
+                        .ident,
+                        .field_access,
+                        .integer,
+                        .char,
+                        .float,
+                        .group,
+                        .bin_op,
+                        .un_op,
+                        => @compileError("TODO: " ++ @tagName(res_copy)),
+                    }
+                },
+                .paren_close => {
+                    const prev = stack.pop() orelse @compileError("Unexpected closing parentheses");
+                    if (prev != .paren) @compileError("Unexpected closing parentheses");
+                    result = .{ .group = &res_copy };
+                },
                 .bracket_open => @compileError("TODO: " ++ @tagName(res_copy)),
                 .bracket_close => @compileError("TODO: " ++ @tagName(res_copy)),
             }
