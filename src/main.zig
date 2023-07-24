@@ -1,28 +1,31 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-inline fn parseExpr(comptime buffer: []const u8) ExprNode {
-    comptime return parseExprImpl(dedupeSlice(u8, buffer));
-}
-fn parseExprImpl(comptime buffer: []const u8) ExprNode {
-    var current: ?ExprNode = null;
+const Seeked = enum {
+    none,
+    paren,
+    bracket,
+};
+const EvalImplUpdate = struct {
+    tokenizer: Tokenizer,
+};
+fn evalImpl(
+    comptime T: type,
+    comptime expr: []const u8,
+    inputs: anytype,
+) !T {
+    _ = inputs;
+    _ = expr;
+    comptime var tokenizer = Tokenizer{};
 
-    var op_stack: []const Operator = &.{};
-    _ = op_stack;
-
-    var tokenizer = Tokenizer{};
-    while (tokenizer.next(buffer)) |tok| {
+    inline while (tokenizer.next()) |tok| {
         switch (tok) {
-            inline .ident, .integer, .char, .float, .grouped => |val, tag| {
-                const old = current orelse {
-                    current = @unionInit(ExprNode, @tagName(tag), val);
-                    continue;
-                };
-                _ = old;
-            },
-            .op => |op| {
-                _ = op;
-            },
+            .ident => {},
+            .field => {},
+            .integer => {},
+            .char => {},
+            .float => {},
+            .op => {},
             .comma => {},
             .paren_open => {},
             .paren_close => {},
@@ -32,39 +35,169 @@ fn parseExprImpl(comptime buffer: []const u8) ExprNode {
     }
 }
 
-const ExprNode = union(enum) {
+inline fn parseExpr(comptime expr: []const u8) ExprUnion {
+    comptime return parseExprImpl(dedupeSlice(u8, expr));
+}
+
+test parseExpr {
+    @compileLog(parseExpr("3 +"));
+}
+
+fn parseExprImpl(
+    comptime expr: []const u8,
+) ExprUnion {
+    if (!@inComptime()) comptime unreachable;
+    comptime {
+        var result: ExprUnion = .null;
+        var tokenizer = Tokenizer{};
+        while (tokenizer.next(expr)) |tok| {
+            const res_copy = result;
+            switch (tok) {
+                inline //
+                .ident,
+                .integer,
+                .char,
+                .float,
+                => |val, tag| {
+                    const new_node = @unionInit(ExprUnion, @tagName(tag), val);
+                    switch (res_copy) {
+                        .null => {
+                            result = new_node;
+                            continue;
+                        },
+                        .bin_op => |bin_op| switch (bin_op.rhs.*) {
+                            .null => {
+                                result = .{ .bin_op = .{
+                                    .lhs = bin_op.lhs,
+                                    .op = bin_op.op,
+                                    .rhs = &new_node,
+                                } };
+                                continue;
+                            },
+                            else => {},
+                        },
+                        .un_op => |un_op| switch (un_op.val.*) {
+                            .null => {
+                                result = .{ .un_op = .{
+                                    .op = un_op.op,
+                                    .val = &new_node,
+                                } };
+                                continue;
+                            },
+                            else => {},
+                        },
+
+                        .ident,
+                        .float,
+                        .integer,
+                        .char,
+                        .group,
+                        .field_access,
+                        => {},
+                    }
+                    const fmt_str = switch (tag) {
+                        .ident => "s",
+                        .char => "u",
+                        .integer, .float => "d",
+                    };
+                    @compileError(std.fmt.comptimePrint("Unexpected token '{" ++ fmt_str ++ "}'", .{val}));
+                },
+                .field => |field| switch (res_copy) {
+                    .null => @compileError("Unexpected token '." ++ field ++ "'"),
+                    .integer,
+                    .char,
+                    .float,
+                    .ident,
+                    .field_access,
+                    .group,
+                    => result = .{ .field_access = .{
+                        .accessed = &res_copy,
+                        .accessor = field,
+                    } },
+                    .bin_op => |bin_op| result = .{ .bin_op = .{
+                        .lhs = bin_op.lhs,
+                        .op = bin_op.op,
+                        .rhs = &ExprUnion{
+                            .field_access = .{
+                                .accessed = bin_op.rhs,
+                                .accessor = field,
+                            },
+                        },
+                    } },
+                    .un_op => |un_op| result = .{ .un_op = .{
+                        .op = un_op.op,
+                        .val = &ExprUnion{
+                            .field_access = .{
+                                .accessed = un_op.val,
+                                .accessor = field,
+                            },
+                        },
+                    } },
+                },
+
+                .bin_op, .un_op => |op| switch (res_copy) {
+                    .null => result = .{ .un_op = .{
+                        .op = op,
+                        .val = &ExprUnion{ .null = {} },
+                    } },
+                    .bin_op => |bin_op| switch (bin_op.rhs.*) {
+                        .null => result = .{ .bin_op = .{
+                            .lhs = bin_op.lhs,
+                            .op = bin_op.op,
+                            .rhs = &ExprUnion{ .un_op = .{
+                                .op = op,
+                                .val = &ExprUnion{ .null = {} },
+                            } },
+                        } },
+                        else => @compileError("TODO: " ++ @tagName(res_copy)),
+                    },
+                    .ident,
+                    .integer,
+                    .char,
+                    .float,
+                    .group,
+                    .field_access,
+                    .un_op,
+                    => result = .{ .bin_op = .{
+                        .lhs = &res_copy,
+                        .op = op,
+                        .rhs = &ExprUnion{ .null = {} },
+                    } },
+                },
+                .paren_open => @compileError("TODO: " ++ @tagName(res_copy)),
+                .paren_close => @compileError("TODO: " ++ @tagName(res_copy)),
+                .bracket_open => @compileError("TODO: " ++ @tagName(res_copy)),
+                .bracket_close => @compileError("TODO: " ++ @tagName(res_copy)),
+            }
+        }
+        return result;
+    }
+}
+
+const ExprUnion = union(enum) {
+    null,
     ident: []const u8,
+    field_access: struct {
+        accessed: *const ExprUnion,
+        accessor: []const u8,
+    },
     integer: comptime_int,
     char: comptime_int,
     float: []const u8,
-    un_op: UnaryOp,
-    bin_op: BinaryOp,
-    idx_access: IndexAccess,
-    func_call: FuncCall,
-    grouped: *const ExprNode,
-
-    const UnaryOp = struct {
+    group: *const ExprUnion,
+    bin_op: struct {
+        lhs: *const ExprUnion,
         op: Operator,
-        val: *const ExprNode,
-    };
-    const BinaryOp = struct {
-        lhs: *const ExprNode,
+        rhs: *const ExprUnion,
+    },
+    un_op: struct {
         op: Operator,
-        rhs: *const ExprNode,
-    };
-    const IndexAccess = struct {
-        indexee: *const ExprNode,
-        indexer: *const ExprNode,
-    };
-    const FuncCall = struct {
-        callee: *const ExprNode,
-        args: []const ExprNode,
-    };
+        val: *const ExprUnion,
+    },
 };
 
 const Operator = enum {
-    @".",
-
+    @"~",
     @"^",
     @"|",
     @"&",
@@ -74,9 +207,6 @@ const Operator = enum {
     @"*",
     @"/",
     @"%",
-
-    @"++",
-    @"**",
 
     @"!",
     @"==",
@@ -89,13 +219,14 @@ const Operator = enum {
 
 const Token = union(enum) {
     ident: []const u8,
+    /// '.' field
+    field: []const u8,
     integer: comptime_int,
     char: comptime_int,
     float: []const u8,
-    op: Operator,
+    bin_op: Operator,
+    un_op: Operator,
 
-    /// ','
-    comma,
     /// '('
     paren_open,
     /// ')'
@@ -108,63 +239,71 @@ const Token = union(enum) {
 
 const Tokenizer = struct {
     index: comptime_int = 0,
+    can_be_unary: bool = true,
 
     inline fn next(comptime state: *Tokenizer, comptime buffer: []const u8) ?Token {
         comptime return state.nextImpl(buffer);
     }
-
     fn nextImpl(comptime tokenizer: *Tokenizer, comptime buffer: []const u8) ?Token {
-        while (tokenizer.index < buffer.len) switch (buffer[tokenizer.index]) {
+        const peek_res = tokenizer.peekImpl(buffer) orelse return null;
+        tokenizer.* = peek_res.state;
+        return peek_res.token;
+    }
+
+    inline fn peek(comptime state: Tokenizer, comptime buffer: []const u8) ?Token {
+        const result = state.peekImpl(dedupeSlice(u8, buffer)) orelse return null;
+        return result.token;
+    }
+    const PeekRes = struct {
+        token: Token,
+        state: Tokenizer,
+    };
+
+    fn peekImpl(comptime state: Tokenizer, comptime buffer: []const u8) ?PeekRes {
+        var idx = state.index;
+        while (idx < buffer.len) switch (buffer[idx]) {
             ' ', '\t', '\n', '\r' => {
-                tokenizer.index += 1;
+                idx += 1;
                 continue;
             },
-            '(' => {
-                tokenizer.index += 1;
-                return .paren_open;
-            },
-            ')' => {
-                tokenizer.index += 1;
-                return .paren_close;
-            },
-            '[' => {
-                tokenizer.index += 1;
-                return .bracket_open;
-            },
-            ']' => {
-                tokenizer.index += 1;
-                return .bracket_close;
-            },
-            ',' => {
-                tokenizer.index += 1;
-                return .comma;
-            },
+            '(' => return .{ .state = .{ .index = idx + 1, .can_be_unary = true }, .token = .paren_open },
+            ')' => return .{ .state = .{ .index = idx + 1, .can_be_unary = false }, .token = .paren_close },
+            '[' => return .{ .state = .{ .index = idx + 1, .can_be_unary = true }, .token = .bracket_open },
+            ']' => return .{ .state = .{ .index = idx + 1, .can_be_unary = false }, .token = .bracket_close },
             'a'...'z',
             'A'...'Z',
             '_',
             => {
-                const start = tokenizer.index;
-                const end = indexOfNonePosComptime(u8, buffer, tokenizer.index + 1, //
-                    "ABCDEFGHIJKLMNOPQRSTUVWXYZ" ++ //
-                    "abcdefghijklmnopqrstuvwxyz" ++ //
-                    "0123456789" ++ "_" //
-                ) orelse buffer.len;
-
+                const start = idx;
+                const end = endOfIdent(buffer, start);
                 const ident = buffer[start..end];
-                tokenizer.index += ident.len;
-
-                return Token{ .ident = ident };
+                return .{
+                    .state = .{ .index = idx + ident.len, .can_be_unary = false },
+                    .token = .{ .ident = ident },
+                };
+            },
+            '.' => {
+                idx += 1;
+                const start = idx;
+                const end = endOfIdent(buffer, start);
+                const ident = buffer[start..end];
+                if (ident.len == 0) @compileError("Expected identifier following period");
+                return .{
+                    .state = .{ .index = idx + ident.len, .can_be_unary = false },
+                    .token = .{ .field = ident },
+                };
             },
             '0'...'9', '\'' => {
-                @setEvalBranchQuota(@min(std.math.maxInt(u32), buffer.len - tokenizer.index));
+                @setEvalBranchQuota(@min(std.math.maxInt(u32), buffer.len - idx));
                 var zig_tokenizer = std.zig.Tokenizer.init(buffer ++ &[_:0]u8{});
-                zig_tokenizer.index = tokenizer.index;
+                zig_tokenizer.index = idx;
                 const tok = zig_tokenizer.next();
 
                 const literal_src = buffer[tok.loc.start..tok.loc.end];
                 assert(literal_src.len != 0);
-                tokenizer.index += literal_src.len;
+                idx += literal_src.len;
 
+                @setEvalBranchQuota(@min(std.math.maxInt(u32), buffer.len - idx));
                 const literal_tok: Token = switch (tok.tag) {
                     .char_literal => Token{ .char = parseCharLiteral(literal_src[0..].*) },
                     .number_literal => switch (std.zig.parseNumberLiteral(literal_src)) {
@@ -183,14 +322,17 @@ const Tokenizer = struct {
                         "' with tag '" ++ @tagName(tok.tag) ++ "'" //
                     ),
                 };
-                return literal_tok;
+                return .{
+                    .state = .{ .index = idx, .can_be_unary = false },
+                    .token = literal_tok,
+                };
             },
             else => |c| {
                 if (!containsComptime(u8, enumTagNameCharSet(Operator), c)) @compileError(
                     std.fmt.comptimePrint("Unexpected character '{'}'", .{std.zig.fmtEscapes(&.{c})}),
                 );
-                const start = tokenizer.index;
-                @setEvalBranchQuota(@min(std.math.maxInt(u32), (buffer.len - tokenizer.index) * 100));
+                const start = idx;
+                @setEvalBranchQuota(@min(std.math.maxInt(u32), (buffer.len - idx) * 100));
                 const end = indexOfNonePosComptime(
                     u8,
                     buffer,
@@ -198,13 +340,26 @@ const Tokenizer = struct {
                     enumTagNameCharSet(Operator),
                 ) orelse buffer.len;
                 const str = buffer[start..end];
-                tokenizer.index += str.len;
-                const op = std.meta.stringToEnum(Operator, str) orelse
-                    @compileError("Unexpected token '" ++ str ++ "'");
-                return Token{ .op = op };
+                idx += str.len;
+                if (!@hasField(Operator, str)) @compileError("Unexpected token '" ++ str ++ "'");
+                const op = @field(Operator, str);
+                return .{
+                    .state = .{ .index = idx, .can_be_unary = true },
+                    .token = @unionInit(Token, if (state.can_be_unary) "un_op" else "bin_op", op),
+                };
             },
         };
         return null;
+    }
+    inline fn endOfIdent(
+        comptime buffer: []const u8,
+        comptime start: comptime_int,
+    ) comptime_int {
+        return indexOfNonePosComptime(u8, buffer, start + 1, //
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ" ++ //
+            "abcdefghijklmnopqrstuvwxyz" ++ //
+            "0123456789" ++ "_" //
+        ) orelse buffer.len;
     }
 };
 
@@ -217,29 +372,34 @@ fn testTokenizer(comptime buffer: []const u8, comptime expected: []const ?Token)
 
 test Tokenizer {
     try testTokenizer(
-        \\3.0   +    3     -
-        \\!     (    'a'   )
-        \\]     [    /     *
-        \\++    **   ==    !=
-        \\<     >    <=    >=
-        \\^     |    &     a_b_C
+        \\~   3.0     +    3
+        \\-   !       (    'a'
+        \\)   *       ]    /
+        \\[   ==      !=   <
+        \\>   <=      >=   ^
+        \\|   a_b_C   &
     , &.{
-        .{ .float = "3.0" },      .{ .op = .@"+" },        .{ .integer = 3 }, .{ .op = .@"-" },
-        .{ .op = .@"!" },         .{ .paren_open = {} },   .{ .char = 'a' },  .{ .paren_close = {} },
-        .{ .bracket_close = {} }, .{ .bracket_open = {} }, .{ .op = .@"/" },  .{ .op = .@"*" },
-        .{ .op = .@"++" },        .{ .op = .@"**" },       .{ .op = .@"==" }, .{ .op = .@"!=" },
-        .{ .op = .@"<" },         .{ .op = .@">" },        .{ .op = .@"<=" }, .{ .op = .@">=" },
-        .{ .op = .@"^" },         .{ .op = .@"|" },        .{ .op = .@"&" },  .{ .ident = "a_b_C" },
-        null,
+        .{ .un_op = .@"~" },     .{ .float = "3.0" },   .{ .bin_op = .@"+" },     .{ .integer = 3 },
+        .{ .bin_op = .@"-" },    .{ .un_op = .@"!" },   .{ .paren_open = {} },    .{ .char = 'a' },
+        .{ .paren_close = {} },  .{ .bin_op = .@"*" },  .{ .bracket_close = {} }, .{ .bin_op = .@"/" },
+        .{ .bracket_open = {} }, .{ .un_op = .@"==" },  .{ .un_op = .@"!=" },     .{ .un_op = .@"<" },
+        .{ .un_op = .@">" },     .{ .un_op = .@"<=" },  .{ .un_op = .@">=" },     .{ .un_op = .@"^" },
+        .{ .un_op = .@"|" },     .{ .ident = "a_b_C" }, .{ .bin_op = .@"&" },     null,
     });
-    try testTokenizer("foo(3, 4.1)", &.{
-        .{ .ident = "foo" },
-        .{ .paren_open = {} },
+
+    try testTokenizer("(x - 2) * (3 + ~y)", &.{
+        .paren_open,
+        .{ .ident = "x" },
+        .{ .bin_op = .@"-" },
+        .{ .integer = 2 },
+        .paren_close,
+        .{ .bin_op = .@"*" },
+        .paren_open,
         .{ .integer = 3 },
-        .{ .comma = {} },
-        .{ .float = "4.1" },
-        .{ .paren_close = {} },
-        null,
+        .{ .bin_op = .@"+" },
+        .{ .un_op = .@"~" },
+        .{ .ident = "y" },
+        .paren_close,
     });
 }
 
@@ -351,7 +511,7 @@ const containsComptime = struct {
         comptime needle: T,
     ) bool {
         comptime {
-            const needle_vec = @splat(haystack.len, needle);
+            const needle_vec: @Vector(haystack.len, T) = @splat(needle);
             return @reduce(.Or, haystack[0..].* == needle_vec);
         }
     }
@@ -413,7 +573,7 @@ const indexOfNoneComptime = struct {
         var trues: @Vector(arr.len, bool) = .{true} ** arr.len;
         @setEvalBranchQuota(@min(std.math.maxInt(u32), excluded.len + 1));
         for (excluded) |ex| {
-            const ex_vec = @splat(arr.len, ex);
+            const ex_vec: @Vector(arr.len, T) = @splat(ex);
             const prev: @Vector(arr.len, u1) = @bitCast(trues);
             const current: @Vector(arr.len, u1) = @bitCast(ex_vec != vec);
             trues = @bitCast(prev & current);
@@ -435,3 +595,36 @@ const dedupeSlice = struct {
         }
     }
 }.dedupeSlice;
+
+fn BoundedPackedStack(
+    comptime max_len: comptime_int,
+    comptime T: type,
+) type {
+    return struct {
+        array: PackedArray = PackedArray.initAllTo(std.math.maxInt(Int)),
+        len: std.math.IntFittingRange(0, max_len) = 0,
+        const Self = @This();
+        const Int = std.meta.Int(.unsigned, @bitSizeOf(T));
+        const PackedArray = std.PackedIntArray(Int, max_len);
+
+        pub fn push(stack: *Self, val: T) error{Overflow}!void {
+            if (stack.len == max_len) return error.Overflow;
+            const int: Int = switch (@typeInfo(T)) {
+                .Enum => @bitCast(@intFromEnum(val)),
+                else => @bitCast(val),
+            };
+            stack.array.set(stack.len, int);
+            stack.len += 1;
+        }
+
+        pub fn pop(stack: *Self) ?T {
+            if (stack.len == 0) return null;
+            stack.len -= 1;
+            const int = stack.array.get(stack.len);
+            return switch (@typeInfo(T)) {
+                .Enum => |info| @enumFromInt(@as(info.tag_type, @bitCast(int))),
+                else => @as(T, @bitCast(int)),
+            };
+        }
+    };
+}
