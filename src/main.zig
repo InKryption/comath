@@ -1,76 +1,132 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const Seeked = enum {
-    none,
-    paren,
-    bracket,
-};
-const EvalImplUpdate = struct {
-    tokenizer: Tokenizer,
-};
-fn evalImpl(
+pub fn eval(
     comptime T: type,
     comptime expr: []const u8,
     inputs: anytype,
-) !T {
-    _ = inputs;
-    _ = expr;
-    comptime var tokenizer = Tokenizer{};
-
-    inline while (tokenizer.next()) |tok| {
-        switch (tok) {
-            .ident => {},
-            .field => {},
-            .integer => {},
-            .char => {},
-            .float => {},
-            .op => {},
-            .comma => {},
-            .paren_open => {},
-            .paren_close => {},
-            .bracket_open => {},
-            .bracket_close => {},
-        }
-    }
+) T {
+    const root = parseExpr(expr);
+    return evalImpl(T, root, inputs, false);
 }
 
-inline fn parseExpr(comptime expr: []const u8) ExprUnion {
-    comptime return parseExprImpl(dedupeSlice(u8, expr));
+test eval {
+    try std.testing.expectEqual(@as(u64, 7), eval(u64, "a + 3", .{ .a = 4 }));
+}
+
+inline fn evalImpl(
+    comptime T: type,
+    comptime expr: ExprNode,
+    inputs: anytype,
+    comptime get_type: bool,
+) if (get_type) type else evalImpl(T, expr, @as(@TypeOf(inputs), undefined), true) {
+    const result = switch (expr) {
+        .null => @compileError("Incomplete parsing (encountered null expression)"),
+        .ident => |ident| @field(inputs, ident),
+        .integer => |int| int,
+        .char => |char| char,
+        .float => |float| float,
+        .group => |group| evalImpl(T, group.*, inputs, false),
+        .field_access => |fa| @field(evalImpl(T, fa.accessed.*, inputs, false), fa.accessor),
+        .index_access => |ia| evalImpl(T, ia.accessed.*, inputs, false)[evalImpl(T, ia.accessor.*, inputs, false)],
+        .bin_op => |bin| blk: {
+            const lhs = evalImpl(T, bin.lhs.*, inputs, false);
+            const rhs = evalImpl(T, bin.rhs.*, inputs, false);
+            break :blk switch (bin.op) {
+                .@"~",
+                .@"!",
+                => |tag| @compileError("Invalid binary operator " ++ @tagName(tag)),
+                .@"^" => lhs ^ rhs,
+                .@"|" => lhs | rhs,
+                .@"&" => lhs & rhs,
+                .@"+" => lhs + rhs,
+                .@"-" => lhs - rhs,
+                .@"*" => lhs * rhs,
+                .@"/" => lhs / rhs,
+                .@"%" => lhs % rhs,
+                .@"==" => lhs == rhs,
+                .@"!=" => lhs != rhs,
+                .@"<" => lhs < rhs,
+                .@">" => lhs > rhs,
+                .@"<=" => lhs <= rhs,
+                .@">=" => lhs >= rhs,
+            };
+        },
+        .un_op => {},
+    };
+    if (!get_type) return result;
+    return @TypeOf(result);
+}
+
+inline fn parseExpr(comptime expr: []const u8) ExprNode {
+    return parseExprImpl(
+        dedupeSlice(u8, expr),
+        .none,
+        .{},
+    ).result.dedupe().*;
 }
 
 test parseExpr {
-    @compileLog(parseExpr("(3 + a)").group);
+    const group = ExprNode.makeGroup;
+    const binOp = ExprNode.makeBinOp;
+    const unOp = ExprNode.makeUnOp;
+    const fieldAccess = ExprNode.makeFieldAccess;
+    const indexAccess = ExprNode.makeIndexAccess;
+    const int = ExprNode.makeInt;
+    const float = ExprNode.makeFloat;
+    const char = ExprNode.makeChar;
+    const ident = ExprNode.makeIdent;
+
+    try std.testing.expectEqualDeep(parseExpr("423_324"), int(423_324));
+    try std.testing.expectEqualDeep(parseExpr("-423_324"), unOp(&.{.@"-"}, int(423_324)));
+    try std.testing.expectEqualDeep(parseExpr("~-423_324"), unOp(&.{ .@"~", .@"-" }, int(423_324)));
+    try std.testing.expectEqualDeep(parseExpr("~(-423_324)"), unOp(&.{.@"~"}, group(unOp(&.{.@"-"}, int(423_324)))));
+    try std.testing.expectEqualDeep(parseExpr("a.b"), fieldAccess(ident("a"), "b"));
+    try std.testing.expectEqualDeep(parseExpr("a[b]"), indexAccess(ident("a"), ident("b")));
+    try std.testing.expectEqualDeep(parseExpr("!('\u{A0}' + a ^ (3 / y.z))"), unOp(&.{.@"!"}, group(binOp(
+        char('\u{A0}'),
+        .@"+",
+        binOp(
+            ident("a"),
+            .@"^",
+            group(binOp(int(3), .@"/", fieldAccess(ident("y"), "z"))),
+        ),
+    ))));
+    try std.testing.expectEqualDeep(parseExpr("3 + -2"), binOp(
+        int(3),
+        .@"+",
+        unOp(&.{.@"-"}, int(2)),
+    ));
+    try std.testing.expectEqualDeep(parseExpr("(y + 2) * x"), binOp(
+        group(binOp(ident("y"), .@"+", int(2))),
+        .@"*",
+        ident("x"),
+    ));
+    try std.testing.expectEqualDeep(parseExpr("y + 2 * x"), binOp(
+        ident("y"),
+        .@"+",
+        binOp(int(2), .@"*", ident("x")),
+    ));
+    try std.testing.expectEqualDeep(parseExpr("2.0 * y ^ 3"), binOp(
+        float(2.0),
+        .@"*",
+        binOp(ident("y"), .@"^", int(3)),
+    ));
 }
 
-fn binOp(
-    comptime lhs: ExprUnion,
-    comptime op: Operator,
-    comptime rhs: ExprUnion,
-) ExprUnion {
-    return .{ .bin_op = .{
-        .lhs = &lhs,
-        .op = op,
-        .rhs = &rhs,
-    } };
-}
-fn unOp(comptime op: Operator, comptime val: ExprUnion) ExprUnion {
-    return .{ .un_op = .{
-        .op = op,
-        .val = &val,
-    } };
-}
-
-const NestType = enum { paren, bracket };
-
+const NestType = enum(comptime_int) { none, paren, bracket };
+const ParseExprImplInnerUpdate = struct {
+    tokenizer: Tokenizer,
+    result: ExprNode,
+};
 fn parseExprImpl(
     comptime expr: []const u8,
-) ExprUnion {
-    if (!@inComptime()) comptime unreachable;
+    comptime nest_type: NestType,
+    comptime tokenizer_init: Tokenizer,
+) ParseExprImplInnerUpdate {
     comptime {
-        var stack: BoundedPackedStack(128, NestType) = .{};
-        var result: ExprUnion = .null;
-        var tokenizer = Tokenizer{};
+        var result: ExprNode = .null;
+        var tokenizer = tokenizer_init;
         while (tokenizer.next(expr)) |tok| {
             const res_copy = result;
             switch (tok) {
@@ -79,128 +135,337 @@ fn parseExprImpl(
                 .integer,
                 .char,
                 .float,
-                => |val, tag| {
-                    const new_node = @unionInit(ExprUnion, @tagName(tag), val);
-                    switch (res_copy) {
-                        .null => {
-                            result = new_node;
-                            continue;
-                        },
-                        .bin_op => |bin_op| switch (bin_op.rhs.*) {
-                            .null => {
-                                result = binOp(bin_op.lhs.*, bin_op.op, new_node);
-                                continue;
-                            },
-                            else => {},
-                        },
-                        .un_op => |un_op| switch (un_op.val.*) {
-                            .null => {
-                                result = unOp(un_op.op, new_node);
-                                continue;
-                            },
-                            else => {},
-                        },
+                => |val, tag| result = res_copy.concatExpr(@unionInit(ExprNode, @tagName(tag), val)),
+                .field => |field| result = res_copy.concatFieldAccess(field),
+                .op => |op| result = res_copy.concatOp(op),
 
-                        .ident,
-                        .float,
-                        .integer,
-                        .char,
-                        .group,
-                        .field_access,
-                        => {},
-                    }
-                    const fmt_str = switch (tag) {
-                        .ident => "s",
-                        .char => "u",
-                        .integer, .float => "d",
-                    };
-                    @compileError(std.fmt.comptimePrint("Unexpected token '{" ++ fmt_str ++ "}'", .{val}));
-                },
-                .field => |field| switch (res_copy) {
-                    .null => @compileError("Unexpected token '." ++ field ++ "'"),
-                    .integer,
-                    .char,
-                    .float,
-                    .ident,
-                    .field_access,
-                    .group,
-                    => result = .{ .field_access = .{
-                        .accessed = &res_copy,
-                        .accessor = field,
-                    } },
-                    .bin_op => |bin_op| result = binOp(bin_op.lhs.*, bin_op.op, .{ .field_access = .{
-                        .accessed = &(bin_op.rhs.*),
-                        .accessor = field,
-                    } }),
-                    .un_op => |un_op| result = unOp(un_op.op, .{ .field_access = .{
-                        .accessed = &(un_op.val.*),
-                        .accessor = field,
-                    } }),
-                },
-
-                .bin_op, .un_op => |op| switch (res_copy) {
-                    .null => result = unOp(op, .null),
-                    .bin_op => |bin_op| switch (bin_op.rhs.*) {
-                        .null => result = binOp(bin_op.lhs.*, bin_op.op, .{ .un_op = unOp(op, .null) }),
-                        else => @compileError("TODO: " ++ @tagName(res_copy)),
-                    },
-                    .ident,
-                    .integer,
-                    .char,
-                    .float,
-                    .group,
-                    .field_access,
-                    .un_op,
-                    => result = binOp(res_copy, op, .null),
-                },
                 .paren_open => {
-                    stack.push(.paren) catch @compileError("Nesting is too deep");
-                    switch (result) {
-                        .null => {},
-                        .ident,
-                        .field_access,
-                        .integer,
-                        .char,
-                        .float,
-                        .group,
-                        .bin_op,
-                        .un_op,
-                        => @compileError("TODO: " ++ @tagName(res_copy)),
-                    }
+                    const update = parseExprImpl(expr, .paren, tokenizer);
+                    tokenizer = update.tokenizer;
+                    result = res_copy.concatExpr(ExprNode.makeGroup(update.result));
                 },
                 .paren_close => {
-                    const prev = stack.pop() orelse @compileError("Unexpected closing parentheses");
-                    if (prev != .paren) @compileError("Unexpected closing parentheses");
-                    result = .{ .group = &res_copy };
+                    if (nest_type != .paren) @compileError("Unexpected closing parentheses");
+                    break;
                 },
-                .bracket_open => @compileError("TODO: " ++ @tagName(res_copy)),
-                .bracket_close => @compileError("TODO: " ++ @tagName(res_copy)),
+
+                .bracket_open => {
+                    const update = parseExprImpl(expr, .bracket, tokenizer);
+                    tokenizer = update.tokenizer;
+                    result = ExprNode.makeIndexAccess(res_copy, update.result);
+                },
+                .bracket_close => {
+                    if (nest_type != .bracket) @compileError("Unexpected closing bracket");
+                    break;
+                },
             }
         }
-        return result;
+        return .{
+            .tokenizer = tokenizer,
+            .result = result,
+        };
     }
 }
 
-const ExprUnion = union(enum) {
+const ExprNode = union(enum) {
     null,
     ident: []const u8,
-    field_access: struct {
-        accessed: *const ExprUnion,
-        accessor: []const u8,
-    },
     integer: comptime_int,
     char: comptime_int,
     float: []const u8,
-    group: *const ExprUnion,
-    bin_op: struct {
-        lhs: *const ExprUnion,
+    group: *const ExprNode,
+    field_access: FieldAccess,
+    index_access: IndexAccess,
+    bin_op: BinOp,
+    un_op: UnOp,
+
+    fn makeIdent(comptime ident: []const u8) ExprNode {
+        return .{ .ident = dedupeSlice(u8, ident) };
+    }
+    fn makeFieldAccess(comptime accessed: ExprNode, comptime accessor: []const u8) ExprNode {
+        return .{ .field_access = .{
+            .accessed = &accessed,
+            .accessor = accessor,
+        } };
+    }
+    fn makeIndexAccess(comptime accessed: ExprNode, comptime accessor: ExprNode) ExprNode {
+        return .{ .index_access = .{
+            .accessed = &accessed,
+            .accessor = &accessor,
+        } };
+    }
+    fn makeInt(comptime val: comptime_int) ExprNode {
+        return .{ .integer = val };
+    }
+    fn makeChar(comptime val: comptime_int) ExprNode {
+        return .{ .char = val };
+    }
+    fn makeFloat(comptime val: anytype) ExprNode {
+        if (std.meta.trait.isZigString(@TypeOf(val))) {
+            return .{ .float = dedupeSlice(u8, val) };
+        }
+        switch (@typeInfo(@TypeOf(val))) {
+            .ComptimeFloat, .Float => {},
+            else => unreachable,
+        }
+        return .{ .float = dedupeSlice(u8, std.fmt.comptimePrint("{d:.1}", .{val})) };
+    }
+    fn makeGroup(comptime expr: ExprNode) ExprNode {
+        return .{ .group = &expr };
+    }
+    fn makeBinOp(
+        comptime lhs: ExprNode,
+        comptime op: Operator,
+        comptime rhs: ExprNode,
+    ) ExprNode {
+        return .{ .bin_op = .{
+            .lhs = &lhs,
+            .op = op,
+            .rhs = &rhs,
+        } };
+    }
+    fn makeUnOp(comptime op: []const Operator, comptime val: ExprNode) ExprNode {
+        return .{ .un_op = .{
+            .op = dedupeSlice(Operator, op),
+            .val = &val,
+        } };
+    }
+
+    inline fn concatOp(comptime base: ExprNode, comptime op: Operator) ExprNode {
+        return switch (base) {
+            .null => makeUnOp(&.{op}, .null),
+
+            .ident,
+            .field_access,
+            .index_access,
+            .integer,
+            .char,
+            .float,
+            .group,
+            => makeBinOp(base, op, .null),
+
+            .bin_op => |bin| switch (bin.rhs.*) {
+                .null => makeBinOp(bin.lhs.*, bin.op, makeUnOp(&.{op}, .null)),
+
+                .ident,
+                .field_access,
+                .index_access,
+                .integer,
+                .char,
+                .float,
+                .group,
+                => blk: {
+                    const old_prec = Operator.precedence[@intFromEnum(bin.op)] orelse @compileError(
+                        @tagName(bin.op) ++ " is not an infix operator",
+                    );
+                    const new_prec = Operator.precedence[@intFromEnum(op)] orelse @compileError(
+                        "Unexpected token " ++ @tagName(op),
+                    );
+                    if (old_prec < 0 and new_prec < 0) {
+                        @compileError(@tagName(bin.op) ++ " cannot be chained with " ++ @tagName(op));
+                    }
+                    if (old_prec < new_prec) {
+                        break :blk makeBinOp(bin.lhs.*, bin.op, makeBinOp(bin.rhs.*, op, .null));
+                    }
+                    break :blk makeBinOp(base, op, .null);
+                },
+                .bin_op, .un_op => makeBinOp(bin.lhs.*, bin.op, bin.rhs.concatOp(op)),
+            },
+            .un_op => |un| switch (un.val.*) {
+                .null => makeUnOp(un.op ++ &[_]Operator{op}, .null),
+
+                .ident,
+                .field_access,
+                .index_access,
+                .integer,
+                .char,
+                .float,
+                .group,
+                => makeBinOp(base, op, .null),
+
+                .bin_op => unreachable,
+                .un_op => unreachable,
+            },
+        };
+    }
+    inline fn concatExpr(comptime base: ExprNode, comptime new: ExprNode) ExprNode {
+        return switch (base) {
+            .null => new,
+
+            .ident,
+            .field_access,
+            .index_access,
+            .integer,
+            .char,
+            .float,
+            .group,
+            => @compileError(std.fmt.comptimePrint("Unexpected token '{}'", .{new.fmt()})),
+
+            .bin_op => |bin| switch (bin.rhs.*) {
+                .null => makeBinOp(bin.lhs.*, bin.op, new),
+
+                .ident,
+                .field_access,
+                .index_access,
+                .integer,
+                .char,
+                .float,
+                .group,
+                => @compileError(std.fmt.comptimePrint("Unexpected token '{}'", .{new.fmt()})),
+                .bin_op,
+                .un_op,
+                => makeBinOp(bin.lhs.*, bin.op, bin.rhs.concatExpr(new)),
+            },
+            .un_op => |un| switch (un.val.*) {
+                .null => makeUnOp(un.op, new),
+
+                .ident,
+                .field_access,
+                .index_access,
+                .integer,
+                .char,
+                .float,
+                .group,
+                => @compileError(std.fmt.comptimePrint("Unexpected token '{}'", .{new.fmt()})),
+
+                .bin_op => unreachable,
+                .un_op => unreachable,
+            },
+        };
+    }
+    inline fn concatFieldAccess(comptime base: ExprNode, comptime field: []const u8) ExprNode {
+        return switch (base) {
+            .null => @compileError("Unexpected token '." ++ field ++ "'"),
+            .integer,
+            .char,
+            .float,
+            .ident,
+            .field_access,
+            .index_access,
+            .group,
+            => makeFieldAccess(base, field),
+            .bin_op => |bin_op| makeBinOp(bin_op.lhs.*, bin_op.op, bin_op.rhs.concatFieldAccess(field)),
+            .un_op => |un_op| makeUnOp(un_op.op, un_op.val.concatFieldAccess(field)),
+        };
+    }
+
+    const dedupe = struct {
+        fn dedupe(comptime expr: ExprNode) *const ExprNode {
+            // comptime return dedupeImpl(expr.*, switch (expr.*) {
+            //     inline else => |val| val,
+            // });
+            return &expr;
+        }
+        fn dedupeImpl(
+            comptime tag: std.meta.FieldEnum(ExprNode),
+            comptime value: std.meta.FieldType(ExprNode, tag),
+        ) *const ExprNode {
+            const res = switch (comptime tag) {
+                .null => ExprNode{ .null = {} },
+                .ident,
+                .float,
+                => @unionInit(ExprNode, @tagName(tag), dedupeSlice(u8, value)),
+                .integer,
+                .char,
+                => @unionInit(ExprNode, @tagName(tag), value),
+                inline //
+                .field_access,
+                .index_access,
+                .group,
+                .bin_op,
+                .un_op,
+                => @unionInit(ExprNode, @tagName(tag), value.dedupe()),
+            };
+            return dedupeImpl2(res);
+        }
+        fn dedupeImpl2(
+            comptime expr: ExprNode,
+        ) *const ExprNode {
+            return &expr;
+        }
+    }.dedupe;
+
+    const FieldAccess = struct {
+        accessed: *const ExprNode,
+        accessor: []const u8,
+
+        inline fn dedupe(comptime fa: FieldAccess) FieldAccess {
+            return .{
+                .accessed = fa.accessed.dedupe(),
+                .accessor = dedupeSlice(u8, fa.accessor),
+            };
+        }
+    };
+    const IndexAccess = struct {
+        accessed: *const ExprNode,
+        accessor: *const ExprNode,
+
+        inline fn dedupe(comptime ia: IndexAccess) IndexAccess {
+            return .{
+                .accessed = ia.accessed.dedupe(),
+                .accessor = ia.accessor.dedupe(),
+            };
+        }
+    };
+    const BinOp = struct {
+        lhs: *const ExprNode,
         op: Operator,
-        rhs: *const ExprUnion,
-    },
-    un_op: struct {
-        op: Operator,
-        val: *const ExprUnion,
-    },
+        rhs: *const ExprNode,
+
+        inline fn dedupe(comptime bin: BinOp) BinOp {
+            return .{
+                .lhs = bin.lhs.dedupe(),
+                .op = bin.op,
+                .rhs = bin.rhs.dedupe(),
+            };
+        }
+    };
+    const UnOp = struct {
+        op: []const Operator,
+        val: *const ExprNode,
+
+        inline fn dedupe(comptime un: UnOp) UnOp {
+            return .{
+                .op = dedupeSlice(Operator, un.op),
+                .val = un.val.dedupe(),
+            };
+        }
+    };
+
+    inline fn fmt(comptime expr: ExprNode) Fmt {
+        return .{ .expr = expr };
+    }
+    const Fmt = struct {
+        expr: ExprNode,
+
+        pub fn format(
+            comptime formatter: Fmt,
+            comptime fmt_str: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) @TypeOf(writer).Error!void {
+            _ = options;
+            if (fmt_str.len != 0) std.fmt.invalidFmtError(fmt_str, formatter);
+            switch (formatter.expr) {
+                .null => try writer.writeAll("null"),
+                .ident => |ident| try writer.writeAll(ident),
+                .field_access => |field| try writer.print("{}.{s}", .{ field.accessed.fmt(), field.accessor }),
+                .index_access => |index| try writer.print("{}[{}]", .{ index.accessed.fmt(), index.accessor.fmt() }),
+                .integer => |int| try writer.print("{d}", .{int}),
+                .char => |char| try writer.print("'{u}'", .{char}),
+                .float => |str| try writer.writeAll(str),
+                .group => |group| try writer.print("({})", .{group.fmt()}),
+                .bin_op => |bin_op| try writer.print("{} {s} {}", .{ bin_op.lhs.fmt(), @tagName(bin_op.op), bin_op.rhs.fmt() }),
+                .un_op => |un_op| {
+                    comptime var prefix: []const u8 = "";
+                    comptime for (un_op.op) |op| {
+                        prefix = prefix ++ @tagName(op);
+                    };
+                    try writer.print("{s}{}", .{ prefix, un_op.val.fmt() });
+                },
+            }
+        }
+    };
 };
 
 const Operator = enum {
@@ -222,6 +487,27 @@ const Operator = enum {
     @">",
     @"<=",
     @">=",
+
+    const precedence = std.enums.directEnumArray(Operator, ?comptime_int, 0, .{
+        .@"~" = null,
+        .@"^" = 5,
+        .@"|" = 4,
+        .@"&" = 4,
+
+        .@"+" = 2,
+        .@"-" = 2,
+        .@"*" = 3,
+        .@"/" = 3,
+        .@"%" = 3,
+
+        .@"!" = null,
+        .@"==" = -1,
+        .@"!=" = -1,
+        .@"<" = -1,
+        .@">" = -1,
+        .@"<=" = -1,
+        .@">=" = -1,
+    });
 };
 
 const Token = union(enum) {
@@ -231,8 +517,7 @@ const Token = union(enum) {
     integer: comptime_int,
     char: comptime_int,
     float: []const u8,
-    bin_op: Operator,
-    un_op: Operator,
+    op: Operator,
 
     /// '('
     paren_open,
@@ -246,7 +531,6 @@ const Token = union(enum) {
 
 const Tokenizer = struct {
     index: comptime_int = 0,
-    can_be_unary: bool = true,
 
     inline fn next(comptime state: *Tokenizer, comptime buffer: []const u8) ?Token {
         comptime return state.nextImpl(buffer);
@@ -273,10 +557,10 @@ const Tokenizer = struct {
                 idx += 1;
                 continue;
             },
-            '(' => return .{ .state = .{ .index = idx + 1, .can_be_unary = true }, .token = .paren_open },
-            ')' => return .{ .state = .{ .index = idx + 1, .can_be_unary = false }, .token = .paren_close },
-            '[' => return .{ .state = .{ .index = idx + 1, .can_be_unary = true }, .token = .bracket_open },
-            ']' => return .{ .state = .{ .index = idx + 1, .can_be_unary = false }, .token = .bracket_close },
+            '(' => return .{ .state = .{ .index = idx + 1 }, .token = .paren_open },
+            ')' => return .{ .state = .{ .index = idx + 1 }, .token = .paren_close },
+            '[' => return .{ .state = .{ .index = idx + 1 }, .token = .bracket_open },
+            ']' => return .{ .state = .{ .index = idx + 1 }, .token = .bracket_close },
             'a'...'z',
             'A'...'Z',
             '_',
@@ -285,7 +569,7 @@ const Tokenizer = struct {
                 const end = endOfIdent(buffer, start);
                 const ident = buffer[start..end];
                 return .{
-                    .state = .{ .index = idx + ident.len, .can_be_unary = false },
+                    .state = .{ .index = idx + ident.len },
                     .token = .{ .ident = ident },
                 };
             },
@@ -296,12 +580,12 @@ const Tokenizer = struct {
                 const ident = buffer[start..end];
                 if (ident.len == 0) @compileError("Expected identifier following period");
                 return .{
-                    .state = .{ .index = idx + ident.len, .can_be_unary = false },
+                    .state = .{ .index = idx + ident.len },
                     .token = .{ .field = ident },
                 };
             },
             '0'...'9', '\'' => {
-                @setEvalBranchQuota(@min(std.math.maxInt(u32), buffer.len - idx));
+                @setEvalBranchQuota(@min(std.math.maxInt(u32), (buffer.len - idx) * 100));
                 var zig_tokenizer = std.zig.Tokenizer.init(buffer ++ &[_:0]u8{});
                 zig_tokenizer.index = idx;
                 const tok = zig_tokenizer.next();
@@ -330,31 +614,56 @@ const Tokenizer = struct {
                     ),
                 };
                 return .{
-                    .state = .{ .index = idx, .can_be_unary = false },
+                    .state = .{ .index = idx },
                     .token = literal_tok,
                 };
             },
-            else => |c| {
-                if (!containsComptime(u8, enumTagNameCharSet(Operator), c)) @compileError(
-                    std.fmt.comptimePrint("Unexpected character '{'}'", .{std.zig.fmtEscapes(&.{c})}),
-                );
+
+            '~', '^', '|', '&', '+', '-', '*', '/', '%' => {
                 const start = idx;
-                @setEvalBranchQuota(@min(std.math.maxInt(u32), (buffer.len - idx) * 100));
-                const end = indexOfNonePosComptime(
-                    u8,
-                    buffer,
-                    start,
-                    enumTagNameCharSet(Operator),
-                ) orelse buffer.len;
-                const str = buffer[start..end];
-                idx += str.len;
-                if (!@hasField(Operator, str)) @compileError("Unexpected token '" ++ str ++ "'");
-                const op = @field(Operator, str);
+                idx += 1;
+                const end = idx;
+                const op = @field(Operator, buffer[start..end]);
                 return .{
-                    .state = .{ .index = idx, .can_be_unary = true },
-                    .token = @unionInit(Token, if (state.can_be_unary) "un_op" else "bin_op", op),
+                    .state = .{ .index = idx },
+                    .token = .{ .op = op },
                 };
             },
+
+            // "!", "!="
+            '!' => {
+                const start = idx;
+                idx += 1;
+                const end = if (idx != buffer.len and buffer[idx] == '=') blk: {
+                    idx += 1;
+                    break :blk idx;
+                } else idx;
+                const op = @field(Operator, buffer[start..end]);
+                return .{
+                    .state = .{ .index = idx },
+                    .token = .{ .op = op },
+                };
+            },
+
+            // "==", "<", "<=", ">=", ">"
+            '=', '<', '>' => {
+                const start = idx;
+                idx += 1;
+                const end = if (idx != buffer.len and buffer[idx] == '=') blk: {
+                    idx += 1;
+                    break :blk idx;
+                } else idx;
+                const str = buffer[start..end];
+                if (!@hasField(Operator, str)) @compileError(
+                    "Unexpected token '" ++ str ++ "'",
+                );
+                const op = @field(Operator, str);
+                return .{
+                    .state = .{ .index = idx },
+                    .token = .{ .op = op },
+                };
+            },
+            else => |c| @compileError("Unexpected character '" ++ &.{c} ++ "'"),
         };
         return null;
     }
@@ -386,25 +695,25 @@ test Tokenizer {
         \\>   <=      >=   ^
         \\|   a_b_C   &
     , &.{
-        .{ .un_op = .@"~" },     .{ .float = "3.0" },   .{ .bin_op = .@"+" },     .{ .integer = 3 },
-        .{ .bin_op = .@"-" },    .{ .un_op = .@"!" },   .{ .paren_open = {} },    .{ .char = 'a' },
-        .{ .paren_close = {} },  .{ .bin_op = .@"*" },  .{ .bracket_close = {} }, .{ .bin_op = .@"/" },
-        .{ .bracket_open = {} }, .{ .un_op = .@"==" },  .{ .un_op = .@"!=" },     .{ .un_op = .@"<" },
-        .{ .un_op = .@">" },     .{ .un_op = .@"<=" },  .{ .un_op = .@">=" },     .{ .un_op = .@"^" },
-        .{ .un_op = .@"|" },     .{ .ident = "a_b_C" }, .{ .bin_op = .@"&" },     null,
+        .{ .op = .@"~" },        .{ .float = "3.0" },   .{ .op = .@"+" },         .{ .integer = 3 },
+        .{ .op = .@"-" },        .{ .op = .@"!" },      .{ .paren_open = {} },    .{ .char = 'a' },
+        .{ .paren_close = {} },  .{ .op = .@"*" },      .{ .bracket_close = {} }, .{ .op = .@"/" },
+        .{ .bracket_open = {} }, .{ .op = .@"==" },     .{ .op = .@"!=" },        .{ .op = .@"<" },
+        .{ .op = .@">" },        .{ .op = .@"<=" },     .{ .op = .@">=" },        .{ .op = .@"^" },
+        .{ .op = .@"|" },        .{ .ident = "a_b_C" }, .{ .op = .@"&" },         null,
     });
 
     try testTokenizer("(x - 2) * (3 + ~y)", &.{
         .paren_open,
         .{ .ident = "x" },
-        .{ .bin_op = .@"-" },
+        .{ .op = .@"-" },
         .{ .integer = 2 },
         .paren_close,
-        .{ .bin_op = .@"*" },
+        .{ .op = .@"*" },
         .paren_open,
         .{ .integer = 3 },
-        .{ .bin_op = .@"+" },
-        .{ .un_op = .@"~" },
+        .{ .op = .@"+" },
+        .{ .op = .@"~" },
         .{ .ident = "y" },
         .paren_close,
     });
