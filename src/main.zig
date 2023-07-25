@@ -1,12 +1,12 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-pub fn eval(
+pub inline fn eval(
     comptime expr: []const u8,
     ctx: anytype,
     inputs: anytype,
 ) !EvalImpl(parseExpr(expr), @TypeOf(ctx), @TypeOf(inputs)) {
-    const root = parseExpr(expr);
+    const root = comptime parseExpr(expr);
     return evalImpl(root, ctx, inputs);
 }
 
@@ -18,15 +18,15 @@ const testing = struct {
 };
 
 test eval {
+    try testing.expectEqual(3, eval("x[y]", defaultCtx(void{}), .{
+        .x = [3]u16{ 0, 3, 7 },
+        .y = 1,
+    }));
+    try testing.expectEqual(-4, eval("-4", defaultCtx(void{}), .{}));
     try testing.expectEqual(7, eval("a + 3", defaultCtx(void{}), .{ .a = 4 }));
     try testing.expectEqual(0, eval("a % 2", defaultCtx(void{}), .{ .a = 4 }));
     try testing.expectEqual(12, eval("(y + 2) * x", defaultCtx(void{}), .{ .y = 2, .x = 3 }));
     try testing.expectEqual(8, eval("y + 2 * x", defaultCtx(void{}), .{ .y = 2, .x = 3 }));
-    // // TODO: figure out why this crashes the compiler
-    // try testing.expectEqual(3, eval("x[y]", defaultCtx(void{}), .{
-    //     .x = [3]u16{ 0, 3, 7 },
-    //     .y = 1,
-    // }));
     try testing.expectEqual(3, eval("a.b", defaultCtx(void{}), .{ .a = .{ .b = 3 } }));
 
     const PowCtx = struct {
@@ -55,43 +55,6 @@ pub fn DefaultCtx(
             .Struct, .Union, .Enum, .Opaque => true,
             else => false,
         };
-
-        pub fn EvalBinOp(comptime Lhs: type, comptime op: BinaryOp, comptime Rhs: type) type {
-            if (meaningful_subctx and @hasDecl(SubCtx, "EvalBinOp")) {
-                const Res = SubCtx.EvalBinOp(Lhs, op, Rhs);
-                if (Res != noreturn) return Res;
-            }
-            return @TypeOf(
-                @as(Lhs, undefined),
-                @as(Rhs, undefined),
-            );
-        }
-        pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: BinaryOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
-            const Lhs = @TypeOf(lhs);
-            const Rhs = @TypeOf(rhs);
-            if (meaningful_subctx and @hasDecl(SubCtx, "EvalBinOp")) {
-                const Res = SubCtx.EvalBinOp(Lhs, op, Rhs);
-                if (Res != noreturn) return ctx.sub_ctx.evalBinOp(lhs, op, rhs);
-            }
-            return switch (op) {
-                .@"^" => lhs ^ rhs,
-                .@"|" => lhs | rhs,
-                .@"&" => lhs & rhs,
-
-                .@"+" => lhs + rhs,
-                .@"-" => lhs - rhs,
-                .@"*" => lhs * rhs,
-                .@"/" => lhs / rhs,
-                .@"%" => lhs % rhs,
-
-                .@"==" => lhs == rhs,
-                .@"!=" => lhs != rhs,
-                .@"<" => lhs < rhs,
-                .@">" => lhs > rhs,
-                .@"<=" => lhs <= rhs,
-                .@">=" => lhs >= rhs,
-            };
-        }
 
         pub fn EvalIndexAccess(
             comptime Lhs: type,
@@ -131,6 +94,63 @@ pub fn DefaultCtx(
                 if (Res != noreturn) return ctx.sub_ctx.evalProperty(lhs, field);
             }
             return @field(lhs, field);
+        }
+
+        pub fn EvalUnOp(comptime op: UnaryOp, comptime Val: type) type {
+            if (meaningful_subctx and @hasDecl(SubCtx, "EvalUnOp")) {
+                const Res = SubCtx.EvalUnOp(op, Val);
+                if (Res != noreturn) return Res;
+            }
+            return Val;
+        }
+        pub fn evalUnOp(ctx: Self, comptime op: UnaryOp, val: anytype) !EvalUnOp(op, @TypeOf(val)) {
+            const Val = @TypeOf(val);
+            if (meaningful_subctx and @hasDecl(SubCtx, "EvalUnOp")) {
+                const Res = SubCtx.EvalUnOp(op, Val);
+                if (Res != noreturn) return ctx.sub_ctx.evalUnOp(op, val);
+            }
+            return switch (op) {
+                .@"~" => ~val,
+                .@"-" => -val,
+                .@"!" => !val,
+            };
+        }
+
+        pub fn EvalBinOp(comptime Lhs: type, comptime op: BinaryOp, comptime Rhs: type) type {
+            if (meaningful_subctx and @hasDecl(SubCtx, "EvalBinOp")) {
+                const Res = SubCtx.EvalBinOp(Lhs, op, Rhs);
+                if (Res != noreturn) return Res;
+            }
+            return @TypeOf(
+                @as(Lhs, undefined),
+                @as(Rhs, undefined),
+            );
+        }
+        pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: BinaryOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+            const Lhs = @TypeOf(lhs);
+            const Rhs = @TypeOf(rhs);
+            if (meaningful_subctx and @hasDecl(SubCtx, "EvalBinOp")) {
+                const Res = SubCtx.EvalBinOp(Lhs, op, Rhs);
+                if (Res != noreturn) return ctx.sub_ctx.evalBinOp(lhs, op, rhs);
+            }
+            return switch (op) {
+                .@"^" => lhs ^ rhs,
+                .@"|" => lhs | rhs,
+                .@"&" => lhs & rhs,
+
+                .@"+" => lhs + rhs,
+                .@"-" => lhs - rhs,
+                .@"*" => lhs * rhs,
+                .@"/" => lhs / rhs,
+                .@"%" => lhs % rhs,
+
+                .@"==" => lhs == rhs,
+                .@"!=" => lhs != rhs,
+                .@"<" => lhs < rhs,
+                .@">" => lhs > rhs,
+                .@"<=" => lhs <= rhs,
+                .@">=" => lhs >= rhs,
+            };
         }
     };
 }
@@ -212,8 +232,8 @@ fn EvalImpl(
             break :blk Ctx.EvalProperty(Lhs, dedupeSlice(u8, fa.accessor));
         },
         .index_access => |ia| blk: {
-            const Lhs = EvalImpl(ia.accessed.*, Ctx, Inputs);
-            const Rhs = EvalImpl(ia.accessor.*, Ctx, Inputs);
+            const Lhs = EvalImpl(ia.accessed, Ctx, Inputs);
+            const Rhs = EvalImpl(ia.accessor, Ctx, Inputs);
             break :blk Ctx.EvalIndexAccess(Lhs, Rhs);
         },
         .bin_op => |bin| blk: {
@@ -221,9 +241,9 @@ fn EvalImpl(
             const Rhs = EvalImpl(bin.rhs.*, Ctx, Inputs);
             break :blk Ctx.EvalBinOp(Lhs, bin.op, Rhs);
         },
-        .un_op => |un| {
-            _ = un;
-            if (true) @compileError("TODO");
+        .un_op => |un| blk: {
+            const Val = EvalImpl(un.val.*, Ctx, Inputs);
+            break :blk Ctx.EvalUnOp(un.op, Val);
         },
     };
 }
@@ -234,7 +254,7 @@ inline fn evalImpl(
 ) !EvalImpl(expr, @TypeOf(ctx), @TypeOf(inputs)) {
     const Ctx = @TypeOf(ctx);
     const Inputs = @TypeOf(inputs);
-    return switch (expr) {
+    return switch (comptime expr) {
         .null => @compileError("Incomplete AST (encountered null expression)"),
         .ident => |ident| @field(inputs, ident),
         .integer => |int| int,
@@ -247,11 +267,11 @@ inline fn evalImpl(
             break :blk ctx.evalProperty(lhs, dedupeSlice(u8, fa.accessor));
         },
         .index_access => |ia| blk: {
-            const Lhs = EvalImpl(ia.accessed.*, Ctx, Inputs);
-            const lhs: Lhs = try evalImpl(ia.accessed.*, ctx, inputs);
+            const Lhs = EvalImpl(ia.accessed, Ctx, Inputs);
+            const lhs: Lhs = try evalImpl(ia.accessed, ctx, inputs);
 
-            const Rhs = EvalImpl(ia.accessor.*, Ctx, Inputs);
-            const rhs: Rhs = try evalImpl(ia.accessor.*, ctx, inputs);
+            const Rhs = EvalImpl(ia.accessor, Ctx, Inputs);
+            const rhs: Rhs = try evalImpl(ia.accessor, ctx, inputs);
 
             break :blk ctx.evalIndexAccess(lhs, rhs);
         },
@@ -264,66 +284,103 @@ inline fn evalImpl(
 
             break :blk ctx.evalBinOp(lhs, bin.op, rhs);
         },
-        .un_op => |un| {
-            _ = un;
-            if (true) @compileError("TODO");
+        .un_op => |un| blk: {
+            const Val = EvalImpl(un.val.*, Ctx, Inputs);
+            const val: Val = try evalImpl(un.val.*, ctx, inputs);
+            break :blk ctx.evalUnOp(un.op, val);
         },
     };
 }
 
-inline fn parseExpr(comptime expr: []const u8) ExprNode {
-    return parseExprImpl(
-        dedupeSlice(u8, expr),
-        .none,
-        .{},
-    ).result.dedupe().*;
+fn parseExpr(comptime expr: []const u8) ExprNode {
+    comptime {
+        const res = parseExprImpl(
+            dedupeSlice(u8, expr),
+            .none,
+            .{},
+        );
+        return res.result;
+    }
 }
 
 test parseExpr {
-    const group = ExprNode.makeGroup;
-    const binOp = ExprNode.makeBinOp;
-    const unOp = ExprNode.makeUnOp;
-    const fieldAccess = ExprNode.makeFieldAccess;
-    const indexAccess = ExprNode.makeIndexAccess;
-    const int = ExprNode.makeInt;
-    const float = ExprNode.makeFloat;
-    const char = ExprNode.makeChar;
-    const ident = ExprNode.makeIdent;
+    const helper = struct {
+        inline fn int(comptime val: comptime_int) ExprNode {
+            return .{ .integer = val };
+        }
+        inline fn float(comptime src: []const u8) ExprNode {
+            return .{ .float = Number{ .src = src } };
+        }
+        inline fn ident(comptime name: []const u8) ExprNode {
+            return .{ .ident = name };
+        }
+        inline fn char(comptime val: comptime_int) ExprNode {
+            return .{ .char = @enumFromInt(val) };
+        }
+        inline fn group(comptime expr: ExprNode) ExprNode {
+            return .{ .group = &expr };
+        }
+        inline fn binOp(comptime lhs: ExprNode, comptime op: BinaryOp, comptime rhs: ExprNode) ExprNode {
+            return .{ .bin_op = .{
+                .lhs = &lhs,
+                .op = op,
+                .rhs = &rhs,
+            } };
+        }
+        inline fn unOp(comptime op: UnaryOp, comptime expr: ExprNode) ExprNode {
+            return .{ .un_op = .{
+                .op = op,
+                .val = &expr,
+            } };
+        }
+        inline fn fieldAccess(comptime expr: ExprNode, comptime field: []const u8) ExprNode {
+            return .{ .field_access = .{
+                .accessed = &expr,
+                .accessor = field,
+            } };
+        }
+        inline fn indexAccess(comptime lhs: ExprNode, comptime idx: ExprNode) ExprNode {
+            return .{ .index_access = &.{
+                .accessed = lhs,
+                .accessor = idx,
+            } };
+        }
+    };
 
-    try std.testing.expectEqualDeep(parseExpr("423_324"), int(423_324));
-    try std.testing.expectEqualDeep(parseExpr("-423_324"), unOp(&.{.@"-"}, int(423_324)));
-    try std.testing.expectEqualDeep(parseExpr("~-423_324"), unOp(&.{ .@"~", .@"-" }, int(423_324)));
-    try std.testing.expectEqualDeep(parseExpr("~(-423_324)"), unOp(&.{.@"~"}, group(unOp(&.{.@"-"}, int(423_324)))));
-    try std.testing.expectEqualDeep(parseExpr("a.b"), fieldAccess(ident("a"), "b"));
-    try std.testing.expectEqualDeep(parseExpr("a[b]"), indexAccess(ident("a"), ident("b")));
-    try std.testing.expectEqualDeep(parseExpr("!('\u{A0}' + a ^ (3 / y.z))"), unOp(&.{.@"!"}, group(binOp(
-        char('\u{A0}'),
+    try std.testing.expectEqualDeep(parseExpr("423_324"), helper.int(423_324));
+    try std.testing.expectEqualDeep(parseExpr("-423_324"), helper.unOp(.@"-", helper.int(423_324)));
+    try std.testing.expectEqualDeep(parseExpr("~-423_324"), helper.unOp(.@"~", helper.unOp(.@"-", helper.int(423_324))));
+    try std.testing.expectEqualDeep(parseExpr("~(-423_324)"), helper.unOp(.@"~", helper.group(helper.unOp(.@"-", helper.int(423_324)))));
+    try std.testing.expectEqualDeep(parseExpr("a.b"), helper.fieldAccess(helper.ident("a"), "b"));
+    try std.testing.expectEqualDeep(parseExpr("a[b]"), helper.indexAccess(helper.ident("a"), helper.ident("b")));
+    try std.testing.expectEqualDeep(parseExpr("!('\u{A0}' + a ^ (3 / y.z))"), helper.unOp(.@"!", helper.group(helper.binOp(
+        helper.char('\u{A0}'),
         .@"+",
-        binOp(
-            ident("a"),
+        helper.binOp(
+            helper.ident("a"),
             .@"^",
-            group(binOp(int(3), .@"/", fieldAccess(ident("y"), "z"))),
+            helper.group(helper.binOp(helper.int(3), .@"/", helper.fieldAccess(helper.ident("y"), "z"))),
         ),
     ))));
-    try std.testing.expectEqualDeep(parseExpr("3 + -2"), binOp(
-        int(3),
+    try std.testing.expectEqualDeep(parseExpr("3 + -2"), helper.binOp(
+        helper.int(3),
         .@"+",
-        unOp(&.{.@"-"}, int(2)),
+        helper.unOp(.@"-", helper.int(2)),
     ));
-    try std.testing.expectEqualDeep(parseExpr("(y + 2) * x"), binOp(
-        group(binOp(ident("y"), .@"+", int(2))),
+    try std.testing.expectEqualDeep(parseExpr("(y + 2) * x"), helper.binOp(
+        helper.group(helper.binOp(helper.ident("y"), .@"+", helper.int(2))),
         .@"*",
-        ident("x"),
+        helper.ident("x"),
     ));
-    try std.testing.expectEqualDeep(parseExpr("y + 2 * x"), binOp(
-        ident("y"),
+    try std.testing.expectEqualDeep(parseExpr("y + 2 * x"), helper.binOp(
+        helper.ident("y"),
         .@"+",
-        binOp(int(2), .@"*", ident("x")),
+        helper.binOp(helper.int(2), .@"*", helper.ident("x")),
     ));
-    try std.testing.expectEqualDeep(parseExpr("2.0 * y ^ 3"), binOp(
-        float("2.0"),
+    try std.testing.expectEqualDeep(parseExpr("2.0 * y ^ 3"), helper.binOp(
+        helper.float("2.0"),
         .@"*",
-        binOp(ident("y"), .@"^", int(3)),
+        helper.binOp(helper.ident("y"), .@"^", helper.int(3)),
     ));
 }
 
@@ -347,15 +404,15 @@ fn parseExprImpl(
                 .ident,
                 .integer,
                 => |val, tag| result = res_copy.concatExpr(@unionInit(ExprNode, @tagName(tag), val)),
-                .char => |val| result = res_copy.concatExpr(ExprNode.makeChar(val)),
-                .float => |val| result = res_copy.concatExpr(ExprNode.makeFloat(val)),
+                .char => |val| result = res_copy.concatExpr(.{ .char = @enumFromInt(val) }),
+                .float => |val| result = res_copy.concatExpr(.{ .float = Number{ .src = val } }),
                 .field => |field| result = res_copy.concatFieldAccess(field),
                 .op => |op| result = res_copy.concatOp(op),
 
                 .paren_open => {
                     const update = parseExprImpl(expr, .paren, tokenizer);
                     tokenizer = update.tokenizer;
-                    result = res_copy.concatExpr(ExprNode.makeGroup(update.result));
+                    result = res_copy.concatExpr(.{ .group = update.result.dedupe() });
                 },
                 .paren_close => {
                     if (nest_type != .paren) @compileError("Unexpected closing parentheses");
@@ -365,7 +422,10 @@ fn parseExprImpl(
                 .bracket_open => {
                     const update = parseExprImpl(expr, .bracket, tokenizer);
                     tokenizer = update.tokenizer;
-                    result = ExprNode.makeIndexAccess(res_copy, update.result);
+                    result = .{ .index_access = &.{
+                        .accessed = res_copy,
+                        .accessor = update.result,
+                    } };
                 },
                 .bracket_close => {
                     if (nest_type != .bracket) @compileError("Unexpected closing bracket");
@@ -388,69 +448,16 @@ const ExprNode = union(enum) {
     float: Number,
     group: *const ExprNode,
     field_access: FieldAccess,
-    index_access: IndexAccess,
+    index_access: *const IndexAccess,
     bin_op: BinOp,
     un_op: UnOp,
 
-    fn makeIdent(comptime ident: []const u8) ExprNode {
-        return .{ .ident = dedupeSlice(u8, ident) };
-    }
-    fn makeFieldAccess(comptime accessed: ExprNode, comptime accessor: []const u8) ExprNode {
-        return .{ .field_access = .{
-            .accessed = &accessed,
-            .accessor = accessor,
-        } };
-    }
-    fn makeIndexAccess(comptime accessed: ExprNode, comptime accessor: ExprNode) ExprNode {
-        return .{ .index_access = .{
-            .accessed = &accessed,
-            .accessor = &accessor,
-        } };
-    }
-    fn makeInt(comptime val: comptime_int) ExprNode {
-        return .{ .integer = val };
-    }
-    fn makeChar(comptime val: comptime_int) ExprNode {
-        return .{ .char = @enumFromInt(val) };
-    }
-    fn makeFloat(comptime val: anytype) ExprNode {
-        comptime {
-            if (std.meta.trait.isZigString(@TypeOf(val))) {
-                return .{ .float = .{ .src = dedupeSlice(u8, val) } };
-            }
-            switch (@typeInfo(@TypeOf(val))) {
-                .ComptimeFloat, .Float => {},
-                else => unreachable,
-            }
-            return .{
-                .float = .{ .src = dedupeSlice(u8, std.fmt.comptimePrint("{}", .{val})) },
-            };
-        }
-    }
-    fn makeGroup(comptime expr: ExprNode) ExprNode {
-        return .{ .group = &expr };
-    }
-    fn makeBinOp(
-        comptime lhs: ExprNode,
-        comptime op: BinaryOp,
-        comptime rhs: ExprNode,
-    ) ExprNode {
-        return .{ .bin_op = .{
-            .lhs = &lhs,
-            .op = op,
-            .rhs = &rhs,
-        } };
-    }
-    fn makeUnOp(comptime op: []const UnaryOp, comptime val: ExprNode) ExprNode {
-        return .{ .un_op = .{
-            .op = dedupeSlice(UnaryOp, op),
-            .val = &val,
-        } };
-    }
-
     inline fn concatOp(comptime base: ExprNode, comptime op: Operator) ExprNode {
         return switch (base) {
-            .null => makeUnOp(&.{std.enums.nameCast(UnaryOp, op)}, .null),
+            .null => .{ .un_op = .{
+                .op = std.enums.nameCast(UnaryOp, op),
+                .val = ExprNode.dedupe(.null),
+            } },
 
             .ident,
             .field_access,
@@ -459,10 +466,21 @@ const ExprNode = union(enum) {
             .char,
             .float,
             .group,
-            => makeBinOp(base, std.enums.nameCast(BinaryOp, op), .null),
+            => .{ .bin_op = .{
+                .lhs = base.dedupe(),
+                .op = std.enums.nameCast(BinaryOp, op),
+                .rhs = ExprNode.dedupe(.null),
+            } },
 
             .bin_op => |bin| switch (bin.rhs.*) {
-                .null => makeBinOp(bin.lhs.*, bin.op, makeUnOp(&.{std.enums.nameCast(UnaryOp, op)}, .null)),
+                .null => .{ .bin_op = .{
+                    .lhs = bin.lhs,
+                    .op = bin.op,
+                    .rhs = ExprNode.dedupe(.{ .un_op = .{
+                        .op = std.enums.nameCast(UnaryOp, op),
+                        .val = ExprNode.dedupe(.null),
+                    } }),
+                } },
 
                 .ident,
                 .field_access,
@@ -478,14 +496,30 @@ const ExprNode = union(enum) {
                         @compileError(@tagName(bin.op) ++ " cannot be chained with " ++ @tagName(op));
                     }
                     if (old_prec < new_prec) {
-                        break :blk makeBinOp(bin.lhs.*, bin.op, makeBinOp(bin.rhs.*, std.enums.nameCast(BinaryOp, op), .null));
+                        break :blk .{ .bin_op = .{
+                            .lhs = bin.lhs,
+                            .op = bin.op,
+                            .rhs = ExprNode.dedupe(.{ .bin_op = .{
+                                .lhs = bin.rhs,
+                                .op = std.enums.nameCast(BinaryOp, op),
+                                .rhs = ExprNode.dedupe(.null),
+                            } }),
+                        } };
                     }
-                    break :blk makeBinOp(base, std.enums.nameCast(BinaryOp, op), .null);
+                    break :blk .{ .bin_op = .{
+                        .lhs = base.dedupe(),
+                        .op = std.enums.nameCast(BinaryOp, op),
+                        .rhs = ExprNode.dedupe(.null),
+                    } };
                 },
-                .bin_op, .un_op => makeBinOp(bin.lhs.*, bin.op, bin.rhs.concatOp(op)),
+                .bin_op, .un_op => .{ .bin_op = .{
+                    .lhs = bin.lhs,
+                    .op = bin.op,
+                    .rhs = bin.rhs.concatOp(op).dedupe(),
+                } },
             },
             .un_op => |un| switch (un.val.*) {
-                .null => makeUnOp(un.op ++ &[_]UnaryOp{std.enums.nameCast(UnaryOp, op)}, .null),
+                .null => un.concatOp(op).*,
 
                 .ident,
                 .field_access,
@@ -494,7 +528,11 @@ const ExprNode = union(enum) {
                 .char,
                 .float,
                 .group,
-                => makeBinOp(base, op, .null),
+                => .{ .bin_op = .{
+                    .lhs = base.dedupe(),
+                    .op = op,
+                    .rhs = ExprNode.dedupe(.null),
+                } },
 
                 .bin_op => unreachable,
                 .un_op => unreachable,
@@ -515,7 +553,11 @@ const ExprNode = union(enum) {
             => @compileError(std.fmt.comptimePrint("Unexpected token '{}'", .{new.fmt()})),
 
             .bin_op => |bin| switch (bin.rhs.*) {
-                .null => makeBinOp(bin.lhs.*, bin.op, new),
+                .null => .{ .bin_op = .{
+                    .lhs = bin.lhs,
+                    .op = bin.op,
+                    .rhs = new.dedupe(),
+                } },
 
                 .ident,
                 .field_access,
@@ -527,23 +569,13 @@ const ExprNode = union(enum) {
                 => @compileError(std.fmt.comptimePrint("Unexpected token '{}'", .{new.fmt()})),
                 .bin_op,
                 .un_op,
-                => makeBinOp(bin.lhs.*, bin.op, bin.rhs.concatExpr(new)),
+                => .{ .bin_op = .{
+                    .lhs = bin.lhs,
+                    .op = bin.op,
+                    .rhs = bin.rhs.concatExpr(new).dedupe(),
+                } },
             },
-            .un_op => |un| switch (un.val.*) {
-                .null => makeUnOp(un.op, new),
-
-                .ident,
-                .field_access,
-                .index_access,
-                .integer,
-                .char,
-                .float,
-                .group,
-                => @compileError(std.fmt.comptimePrint("Unexpected token '{}'", .{new.fmt()})),
-
-                .bin_op => unreachable,
-                .un_op => unreachable,
-            },
+            .un_op => |un| un.insertExprAsInnerTarget(new),
         };
     }
     inline fn concatFieldAccess(comptime base: ExprNode, comptime field: []const u8) ExprNode {
@@ -556,43 +588,51 @@ const ExprNode = union(enum) {
             .field_access,
             .index_access,
             .group,
-            => makeFieldAccess(base, field),
-            .bin_op => |bin_op| makeBinOp(bin_op.lhs.*, bin_op.op, bin_op.rhs.concatFieldAccess(field)),
-            .un_op => |un_op| makeUnOp(un_op.op, un_op.val.concatFieldAccess(field)),
+            => .{ .field_access = .{
+                .accessed = base.dedupe(),
+                .accessor = dedupeSlice(u8, field),
+            } },
+            .bin_op => |bin| .{ .bin_op = .{
+                .lhs = bin.lhs,
+                .op = bin.op,
+                .rhs = bin.rhs.concatFieldAccess(field).dedupe(),
+            } },
+            .un_op => |un| .{ .un_op = .{
+                .op = un.op,
+                .val = un.val.concatFieldAccess(field),
+            } },
         };
     }
 
     const dedupe = struct {
-        fn dedupe(comptime expr: ExprNode) *const ExprNode {
-            // comptime return dedupeImpl(expr, switch (expr) {
-            //     inline else => |val| val,
-            // });
-            return &expr;
-        }
-        fn dedupeImpl(
-            comptime tag: std.meta.FieldEnum(ExprNode),
-            comptime value: std.meta.FieldType(ExprNode, tag),
-        ) *const ExprNode {
-            const res = switch (comptime tag) {
-                .null,
-                .char,
-                => value,
-                .ident => makeIdent(value),
-                .float => makeFloat(value),
-                .integer => makeInt(value),
-                inline //
-                .field_access,
-                .index_access,
-                .group,
-                .bin_op,
-                .un_op,
-                => @unionInit(ExprNode, @tagName(tag), value.dedupe()),
+        inline fn dedupe(comptime expr: ExprNode) *const ExprNode {
+            comptime return switch (expr) {
+                .null => dedupeImpl(expr),
+                .ident => |ident| dedupeImpl(.{ .ident = dedupeSlice(u8, ident) }),
+                .integer => dedupeImpl(expr),
+                .char => dedupeImpl(expr),
+                .float => |num| dedupeImpl(.{ .float = Number{ .src = dedupeSlice(u8, num.src) } }),
+                .group => |group| dedupeImpl(.{ .group = group.dedupe() }),
+                .field_access => |fa| dedupeImpl(.{ .field_access = .{
+                    .accessed = fa.accessed.dedupe(),
+                    .accessor = dedupeSlice(u8, fa.accessor),
+                } }),
+                .index_access => |ia| dedupeImpl(.{ .index_access = .{
+                    .accessed = ia.accessed.dedupe(),
+                    .accessor = ia.accessor.dedupe(),
+                } }),
+                .bin_op => |bin| dedupeImpl(.{ .bin_op = .{
+                    .lhs = bin.lhs.dedupe(),
+                    .op = bin.op,
+                    .rhs = bin.rhs.dedupe(),
+                } }),
+                .un_op => |un| dedupeImpl(.{ .un_op = .{
+                    .op = un.op,
+                    .val = un.val.dedupe(),
+                } }),
             };
-            return dedupeImpl2(res);
         }
-        fn dedupeImpl2(
-            comptime expr: ExprNode,
-        ) *const ExprNode {
+        fn dedupeImpl(comptime expr: ExprNode) *const ExprNode {
             return &expr;
         }
     }.dedupe;
@@ -609,8 +649,8 @@ const ExprNode = union(enum) {
         }
     };
     const IndexAccess = struct {
-        accessed: *const ExprNode,
-        accessor: *const ExprNode,
+        accessed: ExprNode,
+        accessor: ExprNode,
 
         inline fn dedupe(comptime ia: IndexAccess) IndexAccess {
             return .{
@@ -633,14 +673,59 @@ const ExprNode = union(enum) {
         }
     };
     const UnOp = struct {
-        op: []const UnaryOp,
+        op: UnaryOp,
         val: *const ExprNode,
 
         inline fn dedupe(comptime un: UnOp) UnOp {
             return .{
-                .op = dedupeSlice(UnaryOp, un.op),
+                .op = un.op,
                 .val = un.val.dedupe(),
             };
+        }
+
+        inline fn insertExprAsInnerTarget(comptime un: UnOp, comptime expr: ExprNode) ExprNode {
+            return switch (un.val.*) {
+                .null => .{ .un_op = .{
+                    .op = un.op,
+                    .val = expr.dedupe(),
+                } },
+                .un_op => |inner| .{ .un_op = .{
+                    .op = un.op,
+                    .val = inner.insertExprAsInnerTarget(expr).dedupe(),
+                } },
+                else => @compileError(std.fmt.comptimePrint("Unexpected token '{}'", .{un.val.fmt()})),
+            };
+        }
+
+        inline fn concatOp(comptime un: UnOp, comptime op: Operator) *const ExprNode {
+            if (un.concatOpInnerImpl(op)) |updated| {
+                return ExprNode.dedupe(.{ .un_op = updated });
+            }
+            const op_tag = std.enums.nameCast(BinaryOp, op);
+            return .{ .bin_op = .{
+                .lhs = ExprNode.dedupe(.{ .un_op = un }),
+                .op = op_tag,
+                .rhs = ExprNode.dedupe(.null),
+            } };
+        }
+
+        /// returns null if the inner-most target of the unary operations is already present,
+        /// meaning the unary operator can simply be used as the LHS of a binary operation
+        inline fn concatOpInnerImpl(comptime un: UnOp, comptime op: Operator) ?UnOp {
+            switch (un.val.*) {
+                .null => return .{
+                    .op = un.op,
+                    .val = ExprNode.dedupe(.{ .un_op = .{
+                        .op = std.enums.nameCast(UnaryOp, op),
+                        .val = ExprNode.dedupe(.null),
+                    } }),
+                },
+                .un_op => |inner| return if (inner.concatOpInnerImpl(op)) |updated| .{
+                    .op = un.op,
+                    .val = ExprNode.dedupe(.{ .un_op = updated }),
+                },
+                else => return null,
+            }
         }
     };
 
@@ -658,24 +743,19 @@ const ExprNode = union(enum) {
         ) @TypeOf(writer).Error!void {
             _ = options;
             if (fmt_str.len != 0) std.fmt.invalidFmtError(fmt_str, formatter);
-            switch (formatter.expr) {
-                .null => try writer.writeAll("null"),
-                .ident => |ident| try writer.writeAll(ident),
-                .field_access => |field| try writer.print("{}.{s}", .{ field.accessed.fmt(), field.accessor }),
-                .index_access => |index| try writer.print("{}[{}]", .{ index.accessed.fmt(), index.accessor.fmt() }),
-                .integer => |int| try writer.print("{d}", .{int}),
-                .char => |char| try writer.print("'{u}'", .{char}),
-                .float => |str| try writer.writeAll(str),
-                .group => |group| try writer.print("({})", .{group.fmt()}),
-                .bin_op => |bin_op| try writer.print("{} {s} {}", .{ bin_op.lhs.fmt(), @tagName(bin_op.op), bin_op.rhs.fmt() }),
-                .un_op => |un_op| {
-                    comptime var prefix: []const u8 = "";
-                    comptime for (un_op.op) |op| {
-                        prefix = prefix ++ @tagName(op);
-                    };
-                    try writer.print("{s}{}", .{ prefix, un_op.val.fmt() });
-                },
-            }
+            const str = switch (formatter.expr) {
+                .null => "null",
+                .ident => |ident| ident,
+                .field_access => |field| std.fmt.comptimePrint("{}.{s}", .{ field.accessed.fmt(), field.accessor }),
+                .index_access => |index| std.fmt.comptimePrint("{}[{}]", .{ index.accessed.fmt(), index.accessor.fmt() }),
+                .integer => |int| std.fmt.comptimePrint("{d}", .{int}),
+                .char => |char| std.fmt.comptimePrint("'{u}'", .{@intFromEnum(char)}),
+                .float => |num| std.fmt.comptimePrint(num.src),
+                .group => |group| std.fmt.comptimePrint("({})", .{group.fmt()}),
+                .bin_op => |bin_op| std.fmt.comptimePrint("{} {s} {}", .{ bin_op.lhs.fmt(), @tagName(bin_op.op), bin_op.rhs.fmt() }),
+                .un_op => |un_op| std.fmt.comptimePrint("{s}{}", .{ @tagName(un_op.op), un_op.val.fmt() }),
+            };
+            try writer.writeAll(str);
         }
     };
 };
@@ -1021,52 +1101,6 @@ inline fn parseComptimeIntDigits(
     return x;
 }
 
-const containsComptime = struct {
-    inline fn containsComptime(
-        comptime T: type,
-        comptime haystack: []const T,
-        comptime needle: T,
-    ) bool {
-        comptime return containsComptimeImpl(
-            T,
-            dedupeSlice(T, haystack),
-            needle,
-        );
-    }
-    fn containsComptimeImpl(
-        comptime T: type,
-        comptime haystack: []const T,
-        comptime needle: T,
-    ) bool {
-        comptime {
-            const needle_vec: @Vector(haystack.len, T) = @splat(needle);
-            return @reduce(.Or, haystack[0..].* == needle_vec);
-        }
-    }
-}.containsComptime;
-
-const enumTagNameCharSet = struct {
-    inline fn enumTagNameCharSet(comptime E: type) *const [enumTagNameCharSetImpl(E).len]u8 {
-        comptime return enumTagNameCharSetImpl(E)[0..];
-    }
-    fn enumTagNameCharSetImpl(comptime E: type) []const u8 {
-        comptime {
-            var chars: []const u8 = "";
-            var set = std.bit_set.IntegerBitSet(std.math.maxInt(u8)).initEmpty();
-
-            for (@typeInfo(E).Enum.fields) |field| {
-                for (field.name) |c| {
-                    if (set.isSet(c)) continue;
-                    set.set(c);
-                    chars = chars ++ &[_]u8{c};
-                }
-            }
-
-            return chars;
-        }
-    }
-}.enumTagNameCharSet;
-
 inline fn indexOfNonePosComptime(
     comptime T: type,
     comptime haystack: []const T,
@@ -1099,7 +1133,7 @@ const indexOfNoneComptime = struct {
         const vec: @Vector(arr.len, T) = arr;
 
         var trues: @Vector(arr.len, bool) = .{true} ** arr.len;
-        @setEvalBranchQuota(@min(std.math.maxInt(u32), excluded.len + 1));
+        @setEvalBranchQuota(@min(std.math.maxInt(u32), (excluded.len + 1) * 100));
         for (excluded) |ex| {
             const ex_vec: @Vector(arr.len, T) = @splat(ex);
             const prev: @Vector(arr.len, u1) = @bitCast(trues);
