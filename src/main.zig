@@ -22,6 +22,10 @@ test eval {
         .x = [3]u16{ 0, 3, 7 },
         .y = 1,
     }));
+    try testing.expectEqual(.{ 1, 2, 3 }, eval("x + y", defaultCtx(void{}), .{
+        .x = std.simd.iota(u8, 3),
+        .y = @as(@Vector(3, u8), @splat(1)),
+    }));
     try testing.expectEqual(-4, eval("-4", defaultCtx(void{}), .{}));
     try testing.expectEqual(7, eval("a + 3", defaultCtx(void{}), .{ .a = 4 }));
     try testing.expectEqual(0, eval("a % 2", defaultCtx(void{}), .{ .a = 4 }));
