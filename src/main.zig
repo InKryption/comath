@@ -1,61 +1,176 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+pub const UnaryOp = enum {
+    @"~",
+    @"-",
+    @"!",
+};
+pub const BinaryOp = enum {
+    @"^",
+    @"|",
+    @"&",
+
+    @"+",
+    @"-",
+    @"*",
+    @"/",
+    @"%",
+
+    @"==",
+    @"!=",
+    @"<",
+    @">",
+    @"<=",
+    @">=",
+
+    const precedence = std.enums.directEnumArray(BinaryOp, comptime_int, 0, .{
+        .@"^" = 5,
+        .@"|" = 4,
+        .@"&" = 4,
+
+        .@"+" = 2,
+        .@"-" = 2,
+        .@"*" = 3,
+        .@"/" = 3,
+        .@"%" = 3,
+
+        .@"==" = -1,
+        .@"!=" = -1,
+        .@"<" = -1,
+        .@">" = -1,
+        .@"<=" = -1,
+        .@">=" = -1,
+    });
+};
+
 pub fn eval(
-    comptime T: type,
     comptime expr: []const u8,
+    ctx: anytype,
     inputs: anytype,
-) T {
+) EvalImpl(parseExpr(expr), @TypeOf(ctx), @TypeOf(inputs)) {
     const root = parseExpr(expr);
-    return evalImpl(T, root, inputs, false);
+    return evalImpl(root, ctx, inputs);
 }
 
 test eval {
-    try std.testing.expectEqual(@as(u64, 7), eval(u64, "a + 3", .{ .a = 4 }));
+    try std.testing.expectEqual(@as(u64, 7), eval("a + 3", void{}, .{ .a = 4 }));
+    try std.testing.expectEqual(@as(u64, 0), eval("a % 2", void{}, .{ .a = 4 }));
+    try std.testing.expectEqual(@as(u64, 12), eval("(y + 2) * x", void{}, .{ .y = 2, .x = 3 }));
+    try std.testing.expectEqual(@as(u64, 8), eval("y + 2 * x", void{}, .{ .y = 2, .x = 3 }));
 }
 
-inline fn evalImpl(
-    comptime T: type,
+fn EvalImpl(
     comptime expr: ExprNode,
+    comptime Ctx: type,
+    comptime Inputs: type,
+) type {
+    const InputTag = std.meta.FieldEnum(Inputs);
+    return switch (expr) {
+        .null => @compileError("Incomplete AST (encountered null expression)"),
+        .ident => |ident| std.meta.FieldType(Inputs, @field(InputTag, ident)),
+        .integer => comptime_int,
+        .char => |_| @compileError("Handle char"),
+        .float => |_| @compileError("Handle float"),
+        .group => |group| EvalImpl(group.*, Ctx, Inputs),
+        .field_access => |fa| blk: {
+            const Lhs = EvalImpl(fa.accessed.*, Ctx, Inputs);
+            const lhs: Lhs = evalImpl(fa.accessed.*, Ctx, Inputs);
+            if (!@hasDecl(Lhs, "EvalProperty"))
+                break :blk @field(lhs, fa.accessor);
+            break :blk lhs.evalProperty(dedupeSlice(u8, fa.accessed)); // the type must implement a function that returns `Lhs.EvalProperty(string)`
+        },
+        .index_access => |ia| blk: {
+            const Lhs = EvalImpl(ia.accessed.*, Ctx, Inputs);
+            const lhs: Lhs = evalImpl(ia.accessed.*, Ctx, Inputs);
+
+            const Rhs = EvalImpl(ia.accessor.*, Ctx, Inputs);
+            const rhs: Rhs = evalImpl(ia.accessed.*, Ctx, Inputs);
+
+            break :blk lhs.evalIndex(Ctx, rhs); // the type must implement a function that returns `Lhs.EvalProperty(Ctx, Rhs)`
+        },
+        .bin_op => |bin| blk: {
+            const Lhs = EvalImpl(bin.lhs.*, Ctx, Inputs);
+            const Rhs = EvalImpl(bin.rhs.*, Ctx, Inputs);
+            switch (@typeInfo(Lhs)) {
+                .ComptimeInt, .ComptimeFloat, .Int, .Float => return Lhs,
+                else => {},
+            }
+            break :blk Lhs.EvalBinOp(Ctx, bin.op, Rhs); // the type must implement a function that returns `Lhs.EvalBinOp(Ctx, bin.op, Rhs)`
+        },
+        .un_op => |un| {
+            _ = un;
+            if (true) @compileError("TODO");
+        },
+    };
+}
+inline fn evalImpl(
+    comptime expr: ExprNode,
+    ctx: anytype,
     inputs: anytype,
-    comptime get_type: bool,
-) if (get_type) type else evalImpl(T, expr, @as(@TypeOf(inputs), undefined), true) {
-    const result = switch (expr) {
-        .null => @compileError("Incomplete parsing (encountered null expression)"),
+) EvalImpl(expr, @TypeOf(ctx), @TypeOf(inputs)) {
+    const Ctx: type = @TypeOf(ctx);
+    const Inputs: type = @TypeOf(inputs);
+    return switch (expr) {
+        .null => @compileError("Incomplete AST (encountered null expression)"),
         .ident => |ident| @field(inputs, ident),
         .integer => |int| int,
-        .char => |char| char,
-        .float => |float| float,
-        .group => |group| evalImpl(T, group.*, inputs, false),
-        .field_access => |fa| @field(evalImpl(T, fa.accessed.*, inputs, false), fa.accessor),
-        .index_access => |ia| evalImpl(T, ia.accessed.*, inputs, false)[evalImpl(T, ia.accessor.*, inputs, false)],
-        .bin_op => |bin| blk: {
-            const lhs = evalImpl(T, bin.lhs.*, inputs, false);
-            const rhs = evalImpl(T, bin.rhs.*, inputs, false);
-            break :blk switch (bin.op) {
-                .@"~",
-                .@"!",
-                => |tag| @compileError("Invalid binary operator " ++ @tagName(tag)),
-                .@"^" => lhs ^ rhs,
-                .@"|" => lhs | rhs,
-                .@"&" => lhs & rhs,
-                .@"+" => lhs + rhs,
-                .@"-" => lhs - rhs,
-                .@"*" => lhs * rhs,
-                .@"/" => lhs / rhs,
-                .@"%" => lhs % rhs,
-                .@"==" => lhs == rhs,
-                .@"!=" => lhs != rhs,
-                .@"<" => lhs < rhs,
-                .@">" => lhs > rhs,
-                .@"<=" => lhs <= rhs,
-                .@">=" => lhs >= rhs,
-            };
+        .char => |_| @compileError("Handle char"),
+        .float => |_| @compileError("Handle float"),
+        .group => |group| evalImpl(group.*, ctx, inputs),
+        .field_access => |fa| blk: {
+            const Lhs = EvalImpl(fa.accessed.*, Ctx, Inputs);
+            const lhs: Lhs = evalImpl(fa.accessed.*, ctx, inputs);
+            if (!@hasDecl(Lhs, "EvalProperty"))
+                break :blk @field(lhs, fa.accessor);
+            break :blk lhs.evalProperty(dedupeSlice(u8, fa.accessed)); // the type must implement a function that returns `Lhs.EvalProperty(string)`
         },
-        .un_op => {},
+        .index_access => |ia| blk: {
+            const Lhs = EvalImpl(ia.accessed.*, Ctx, Inputs);
+            const lhs: Lhs = evalImpl(ia.accessed.*, ctx, inputs);
+
+            const Rhs = EvalImpl(ia.accessor.*, Ctx, Inputs);
+            const rhs: Rhs = evalImpl(ia.accessed.*, ctx, inputs);
+
+            break :blk lhs.evalIndex(ctx, rhs); // the type must implement a function that returns `Lhs.EvalProperty(Ctx, Rhs)`
+        },
+        .bin_op => |bin| blk: {
+            const Lhs = EvalImpl(bin.lhs.*, Ctx, Inputs);
+            const lhs: Lhs = evalImpl(bin.lhs.*, ctx, inputs);
+
+            const Rhs = EvalImpl(bin.rhs.*, Ctx, Inputs);
+            const rhs: Rhs = evalImpl(bin.rhs.*, ctx, inputs);
+
+            switch (@typeInfo(Lhs)) {
+                .ComptimeInt, .ComptimeFloat, .Int, .Float => {
+                    break :blk switch (bin.op) {
+                        .@"^" => lhs ^ rhs,
+                        .@"|" => lhs | rhs,
+                        .@"&" => lhs & rhs,
+
+                        .@"+" => lhs + rhs,
+                        .@"-" => lhs - rhs,
+                        .@"*" => lhs * rhs,
+                        .@"/" => lhs / rhs,
+                        .@"%" => lhs % rhs,
+
+                        .@"==" => lhs == rhs,
+                        .@"!=" => lhs != rhs,
+                        .@"<" => lhs < rhs,
+                        .@">" => lhs > rhs,
+                        .@"<=" => lhs <= rhs,
+                        .@">=" => lhs >= rhs,
+                    };
+                },
+                else => {},
+            }
+            break :blk lhs.evalBinOp(ctx, bin.op, rhs); // the type must implement a function that returns `Lhs.EvalBinOp(Ctx, bin.op, Rhs)`
+        },
+        .un_op => |un| {
+            _ = un;
+            if (true) @compileError("TODO");
+        },
     };
-    if (!get_type) return result;
-    return @TypeOf(result);
 }
 
 inline fn parseExpr(comptime expr: []const u8) ExprNode {
@@ -215,7 +330,7 @@ const ExprNode = union(enum) {
     }
     fn makeBinOp(
         comptime lhs: ExprNode,
-        comptime op: Operator,
+        comptime op: BinaryOp,
         comptime rhs: ExprNode,
     ) ExprNode {
         return .{ .bin_op = .{
@@ -224,16 +339,16 @@ const ExprNode = union(enum) {
             .rhs = &rhs,
         } };
     }
-    fn makeUnOp(comptime op: []const Operator, comptime val: ExprNode) ExprNode {
+    fn makeUnOp(comptime op: []const UnaryOp, comptime val: ExprNode) ExprNode {
         return .{ .un_op = .{
-            .op = dedupeSlice(Operator, op),
+            .op = dedupeSlice(UnaryOp, op),
             .val = &val,
         } };
     }
 
     inline fn concatOp(comptime base: ExprNode, comptime op: Operator) ExprNode {
         return switch (base) {
-            .null => makeUnOp(&.{op}, .null),
+            .null => makeUnOp(&.{std.enums.nameCast(UnaryOp, op)}, .null),
 
             .ident,
             .field_access,
@@ -242,10 +357,10 @@ const ExprNode = union(enum) {
             .char,
             .float,
             .group,
-            => makeBinOp(base, op, .null),
+            => makeBinOp(base, std.enums.nameCast(BinaryOp, op), .null),
 
             .bin_op => |bin| switch (bin.rhs.*) {
-                .null => makeBinOp(bin.lhs.*, bin.op, makeUnOp(&.{op}, .null)),
+                .null => makeBinOp(bin.lhs.*, bin.op, makeUnOp(&.{std.enums.nameCast(UnaryOp, op)}, .null)),
 
                 .ident,
                 .field_access,
@@ -255,24 +370,20 @@ const ExprNode = union(enum) {
                 .float,
                 .group,
                 => blk: {
-                    const old_prec = Operator.precedence[@intFromEnum(bin.op)] orelse @compileError(
-                        @tagName(bin.op) ++ " is not an infix operator",
-                    );
-                    const new_prec = Operator.precedence[@intFromEnum(op)] orelse @compileError(
-                        "Unexpected token " ++ @tagName(op),
-                    );
+                    const old_prec = BinaryOp.precedence[@intFromEnum(bin.op)];
+                    const new_prec = BinaryOp.precedence[@intFromEnum(op)];
                     if (old_prec < 0 and new_prec < 0) {
                         @compileError(@tagName(bin.op) ++ " cannot be chained with " ++ @tagName(op));
                     }
                     if (old_prec < new_prec) {
-                        break :blk makeBinOp(bin.lhs.*, bin.op, makeBinOp(bin.rhs.*, op, .null));
+                        break :blk makeBinOp(bin.lhs.*, bin.op, makeBinOp(bin.rhs.*, std.enums.nameCast(BinaryOp, op), .null));
                     }
-                    break :blk makeBinOp(base, op, .null);
+                    break :blk makeBinOp(base, std.enums.nameCast(BinaryOp, op), .null);
                 },
                 .bin_op, .un_op => makeBinOp(bin.lhs.*, bin.op, bin.rhs.concatOp(op)),
             },
             .un_op => |un| switch (un.val.*) {
-                .null => makeUnOp(un.op ++ &[_]Operator{op}, .null),
+                .null => makeUnOp(un.op ++ &[_]UnaryOp{std.enums.nameCast(UnaryOp, op)}, .null),
 
                 .ident,
                 .field_access,
@@ -351,10 +462,9 @@ const ExprNode = union(enum) {
 
     const dedupe = struct {
         fn dedupe(comptime expr: ExprNode) *const ExprNode {
-            // comptime return dedupeImpl(expr.*, switch (expr.*) {
-            //     inline else => |val| val,
-            // });
-            return &expr;
+            comptime return dedupeImpl(expr, switch (expr) {
+                inline else => |val| val,
+            });
         }
         fn dedupeImpl(
             comptime tag: std.meta.FieldEnum(ExprNode),
@@ -409,7 +519,7 @@ const ExprNode = union(enum) {
     };
     const BinOp = struct {
         lhs: *const ExprNode,
-        op: Operator,
+        op: BinaryOp,
         rhs: *const ExprNode,
 
         inline fn dedupe(comptime bin: BinOp) BinOp {
@@ -421,12 +531,12 @@ const ExprNode = union(enum) {
         }
     };
     const UnOp = struct {
-        op: []const Operator,
+        op: []const UnaryOp,
         val: *const ExprNode,
 
         inline fn dedupe(comptime un: UnOp) UnOp {
             return .{
-                .op = dedupeSlice(Operator, un.op),
+                .op = dedupeSlice(UnaryOp, un.op),
                 .val = un.val.dedupe(),
             };
         }
