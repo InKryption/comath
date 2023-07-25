@@ -1,6 +1,145 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+pub fn eval(
+    comptime expr: []const u8,
+    ctx: anytype,
+    inputs: anytype,
+) !EvalImpl(parseExpr(expr), @TypeOf(ctx), @TypeOf(inputs)) {
+    const root = parseExpr(expr);
+    return evalImpl(root, ctx, inputs);
+}
+
+const testing = struct {
+    fn expectEqual(expected: anytype, actual: anytype) !void {
+        const T = @TypeOf(expected, actual);
+        return std.testing.expectEqual(@as(T, expected), @as(T, actual));
+    }
+};
+
+test eval {
+    try testing.expectEqual(7, eval("a + 3", defaultCtx(void{}), .{ .a = 4 }));
+    try testing.expectEqual(0, eval("a % 2", defaultCtx(void{}), .{ .a = 4 }));
+    try testing.expectEqual(12, eval("(y + 2) * x", defaultCtx(void{}), .{ .y = 2, .x = 3 }));
+    try testing.expectEqual(8, eval("y + 2 * x", defaultCtx(void{}), .{ .y = 2, .x = 3 }));
+    // // TODO: figure out why this crashes the compiler
+    // try testing.expectEqual(3, eval("x[y]", defaultCtx(void{}), .{
+    //     .x = [3]u16{ 0, 3, 7 },
+    //     .y = 1,
+    // }));
+    try testing.expectEqual(3, eval("a.b", defaultCtx(void{}), .{ .a = .{ .b = 3 } }));
+}
+
+pub inline fn defaultCtx(sub_ctx: anytype) DefaultCtx(@TypeOf(sub_ctx)) {
+    return .{ .sub_ctx = sub_ctx };
+}
+pub fn DefaultCtx(
+    comptime SubCtx: type,
+) type {
+    return struct {
+        sub_ctx: SubCtx,
+        const Self = @This();
+
+        const meaningful_subctx = switch (@typeInfo(ImplicitDeref(SubCtx))) {
+            .Struct, .Union, .Enum, .Opaque => true,
+            else => false,
+        };
+
+        pub fn EvalBinOp(comptime Lhs: type, comptime op: BinaryOp, comptime Rhs: type) type {
+            if (meaningful_subctx and @hasDecl(SubCtx, "EvalBinOp")) {
+                const Res = SubCtx.EvalBinOp(Lhs, op, Rhs);
+                if (Res != noreturn) return Res;
+            }
+            return @TypeOf(
+                @as(Lhs, undefined),
+                @as(Rhs, undefined),
+            );
+        }
+        pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: BinaryOp, rhs: anytype) EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+            const Lhs = @TypeOf(lhs);
+            const Rhs = @TypeOf(rhs);
+            if (meaningful_subctx and @hasDecl(SubCtx, "EvalBinOp")) {
+                const Res = SubCtx.EvalBinOp(Lhs, op, Rhs);
+                if (Res != noreturn) return ctx.sub_ctx.evalBinOp(lhs, op, rhs);
+            }
+            return switch (op) {
+                .@"^" => lhs ^ rhs,
+                .@"|" => lhs | rhs,
+                .@"&" => lhs & rhs,
+
+                .@"+" => lhs + rhs,
+                .@"-" => lhs - rhs,
+                .@"*" => lhs * rhs,
+                .@"/" => lhs / rhs,
+                .@"%" => lhs % rhs,
+
+                .@"==" => lhs == rhs,
+                .@"!=" => lhs != rhs,
+                .@"<" => lhs < rhs,
+                .@">" => lhs > rhs,
+                .@"<=" => lhs <= rhs,
+                .@">=" => lhs >= rhs,
+            };
+        }
+
+        pub fn EvalIndexAccess(
+            comptime Lhs: type,
+            comptime Rhs: type,
+        ) type {
+            if (meaningful_subctx and @hasDecl(SubCtx, "EvalIndexAccess")) {
+                const Res = SubCtx.EvalIndexAccess(Lhs, Rhs);
+                if (Res != noreturn) return Res;
+            }
+            return std.meta.Elem(Lhs);
+        }
+        pub inline fn evalIndexAccess(ctx: Self, lhs: anytype, rhs: anytype) EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
+            const Lhs = @TypeOf(lhs);
+            const Rhs = @TypeOf(rhs);
+
+            if (meaningful_subctx and @hasDecl(SubCtx, "EvalIndexAccess")) {
+                const Res = SubCtx.EvalIndexAccess(Lhs, Rhs);
+                if (Res != noreturn) return ctx.sub_ctx.evalIndexAccess(lhs, rhs);
+            }
+            return lhs[rhs];
+        }
+
+        pub fn EvalProperty(
+            comptime Lhs: type,
+            comptime field: []const u8,
+        ) type {
+            if (meaningful_subctx and @hasDecl(SubCtx, "EvalProperty")) {
+                const Res = SubCtx.EvalProperty(Lhs, field);
+                if (Res != noreturn) return Res;
+            }
+            return std.meta.FieldType(Lhs, @field(std.meta.FieldEnum(Lhs), field));
+        }
+        pub inline fn evalProperty(ctx: Self, lhs: anytype, comptime field: []const u8) EvalProperty(@TypeOf(lhs), field) {
+            const Lhs = @TypeOf(lhs);
+            if (meaningful_subctx and @hasDecl(SubCtx, "EvalProperty")) {
+                const Res = SubCtx.EvalProperty(Lhs, field);
+                if (Res != noreturn) return ctx.sub_ctx.evalProperty(lhs, field);
+            }
+            return @field(lhs, field);
+        }
+    };
+}
+
+/// Represents a non-integer value, represented by the source code
+/// Can be interpreted as needed, by default it is interpreted as a
+/// floating point value
+pub const Number = struct {
+    src: []const u8,
+
+    pub fn asFloat(comptime number: Number) comptime_float {
+        comptime return std.fmt.parseFloat(f128, number.src) catch |err| @compileError(@errorName(err));
+    }
+};
+
+/// Represents a character literal value, distinguished from `comptime_int`.
+pub const Char = enum(comptime_int) {
+    _,
+};
+
 pub const UnaryOp = enum {
     @"~",
     @"-",
@@ -44,22 +183,6 @@ pub const BinaryOp = enum {
     });
 };
 
-pub fn eval(
-    comptime expr: []const u8,
-    ctx: anytype,
-    inputs: anytype,
-) EvalImpl(parseExpr(expr), @TypeOf(ctx), @TypeOf(inputs)) {
-    const root = parseExpr(expr);
-    return evalImpl(root, ctx, inputs);
-}
-
-test eval {
-    try std.testing.expectEqual(@as(u64, 7), eval("a + 3", void{}, .{ .a = 4 }));
-    try std.testing.expectEqual(@as(u64, 0), eval("a % 2", void{}, .{ .a = 4 }));
-    try std.testing.expectEqual(@as(u64, 12), eval("(y + 2) * x", void{}, .{ .y = 2, .x = 3 }));
-    try std.testing.expectEqual(@as(u64, 8), eval("y + 2 * x", void{}, .{ .y = 2, .x = 3 }));
-}
-
 fn EvalImpl(
     comptime expr: ExprNode,
     comptime Ctx: type,
@@ -70,33 +193,22 @@ fn EvalImpl(
         .null => @compileError("Incomplete AST (encountered null expression)"),
         .ident => |ident| std.meta.FieldType(Inputs, @field(InputTag, ident)),
         .integer => comptime_int,
-        .char => |_| @compileError("Handle char"),
-        .float => |_| @compileError("Handle float"),
+        .char => Char,
+        .float => Number,
         .group => |group| EvalImpl(group.*, Ctx, Inputs),
         .field_access => |fa| blk: {
             const Lhs = EvalImpl(fa.accessed.*, Ctx, Inputs);
-            const lhs: Lhs = evalImpl(fa.accessed.*, Ctx, Inputs);
-            if (!@hasDecl(Lhs, "EvalProperty"))
-                break :blk @field(lhs, fa.accessor);
-            break :blk lhs.evalProperty(dedupeSlice(u8, fa.accessed)); // the type must implement a function that returns `Lhs.EvalProperty(string)`
+            break :blk Ctx.EvalProperty(Lhs, dedupeSlice(u8, fa.accessor));
         },
         .index_access => |ia| blk: {
             const Lhs = EvalImpl(ia.accessed.*, Ctx, Inputs);
-            const lhs: Lhs = evalImpl(ia.accessed.*, Ctx, Inputs);
-
             const Rhs = EvalImpl(ia.accessor.*, Ctx, Inputs);
-            const rhs: Rhs = evalImpl(ia.accessed.*, Ctx, Inputs);
-
-            break :blk lhs.evalIndex(Ctx, rhs); // the type must implement a function that returns `Lhs.EvalProperty(Ctx, Rhs)`
+            break :blk Ctx.EvalIndexAccess(Lhs, Rhs);
         },
         .bin_op => |bin| blk: {
             const Lhs = EvalImpl(bin.lhs.*, Ctx, Inputs);
             const Rhs = EvalImpl(bin.rhs.*, Ctx, Inputs);
-            switch (@typeInfo(Lhs)) {
-                .ComptimeInt, .ComptimeFloat, .Int, .Float => return Lhs,
-                else => {},
-            }
-            break :blk Lhs.EvalBinOp(Ctx, bin.op, Rhs); // the type must implement a function that returns `Lhs.EvalBinOp(Ctx, bin.op, Rhs)`
+            break :blk Ctx.EvalBinOp(Lhs, bin.op, Rhs);
         },
         .un_op => |un| {
             _ = un;
@@ -108,63 +220,38 @@ inline fn evalImpl(
     comptime expr: ExprNode,
     ctx: anytype,
     inputs: anytype,
-) EvalImpl(expr, @TypeOf(ctx), @TypeOf(inputs)) {
-    const Ctx: type = @TypeOf(ctx);
-    const Inputs: type = @TypeOf(inputs);
+) !EvalImpl(expr, @TypeOf(ctx), @TypeOf(inputs)) {
+    const Ctx = @TypeOf(ctx);
+    const Inputs = @TypeOf(inputs);
     return switch (expr) {
         .null => @compileError("Incomplete AST (encountered null expression)"),
         .ident => |ident| @field(inputs, ident),
         .integer => |int| int,
-        .char => |_| @compileError("Handle char"),
-        .float => |_| @compileError("Handle float"),
+        .char => |char| char,
+        .float => |num| num,
         .group => |group| evalImpl(group.*, ctx, inputs),
         .field_access => |fa| blk: {
             const Lhs = EvalImpl(fa.accessed.*, Ctx, Inputs);
-            const lhs: Lhs = evalImpl(fa.accessed.*, ctx, inputs);
-            if (!@hasDecl(Lhs, "EvalProperty"))
-                break :blk @field(lhs, fa.accessor);
-            break :blk lhs.evalProperty(dedupeSlice(u8, fa.accessed)); // the type must implement a function that returns `Lhs.EvalProperty(string)`
+            const lhs: Lhs = try evalImpl(fa.accessed.*, ctx, inputs);
+            break :blk ctx.evalProperty(lhs, dedupeSlice(u8, fa.accessor));
         },
         .index_access => |ia| blk: {
             const Lhs = EvalImpl(ia.accessed.*, Ctx, Inputs);
-            const lhs: Lhs = evalImpl(ia.accessed.*, ctx, inputs);
+            const lhs: Lhs = try evalImpl(ia.accessed.*, ctx, inputs);
 
             const Rhs = EvalImpl(ia.accessor.*, Ctx, Inputs);
-            const rhs: Rhs = evalImpl(ia.accessed.*, ctx, inputs);
+            const rhs: Rhs = try evalImpl(ia.accessor.*, ctx, inputs);
 
-            break :blk lhs.evalIndex(ctx, rhs); // the type must implement a function that returns `Lhs.EvalProperty(Ctx, Rhs)`
+            break :blk ctx.evalIndexAccess(lhs, rhs);
         },
         .bin_op => |bin| blk: {
             const Lhs = EvalImpl(bin.lhs.*, Ctx, Inputs);
-            const lhs: Lhs = evalImpl(bin.lhs.*, ctx, inputs);
+            const lhs: Lhs = try evalImpl(bin.lhs.*, ctx, inputs);
 
             const Rhs = EvalImpl(bin.rhs.*, Ctx, Inputs);
-            const rhs: Rhs = evalImpl(bin.rhs.*, ctx, inputs);
+            const rhs: Rhs = try evalImpl(bin.rhs.*, ctx, inputs);
 
-            switch (@typeInfo(Lhs)) {
-                .ComptimeInt, .ComptimeFloat, .Int, .Float => {
-                    break :blk switch (bin.op) {
-                        .@"^" => lhs ^ rhs,
-                        .@"|" => lhs | rhs,
-                        .@"&" => lhs & rhs,
-
-                        .@"+" => lhs + rhs,
-                        .@"-" => lhs - rhs,
-                        .@"*" => lhs * rhs,
-                        .@"/" => lhs / rhs,
-                        .@"%" => lhs % rhs,
-
-                        .@"==" => lhs == rhs,
-                        .@"!=" => lhs != rhs,
-                        .@"<" => lhs < rhs,
-                        .@">" => lhs > rhs,
-                        .@"<=" => lhs <= rhs,
-                        .@">=" => lhs >= rhs,
-                    };
-                },
-                else => {},
-            }
-            break :blk lhs.evalBinOp(ctx, bin.op, rhs); // the type must implement a function that returns `Lhs.EvalBinOp(Ctx, bin.op, Rhs)`
+            break :blk ctx.evalBinOp(lhs, bin.op, rhs);
         },
         .un_op => |un| {
             _ = un;
@@ -223,7 +310,7 @@ test parseExpr {
         binOp(int(2), .@"*", ident("x")),
     ));
     try std.testing.expectEqualDeep(parseExpr("2.0 * y ^ 3"), binOp(
-        float(2.0),
+        float("2.0"),
         .@"*",
         binOp(ident("y"), .@"^", int(3)),
     ));
@@ -248,9 +335,9 @@ fn parseExprImpl(
                 inline //
                 .ident,
                 .integer,
-                .char,
-                .float,
                 => |val, tag| result = res_copy.concatExpr(@unionInit(ExprNode, @tagName(tag), val)),
+                .char => |val| result = res_copy.concatExpr(ExprNode.makeChar(val)),
+                .float => |val| result = res_copy.concatExpr(ExprNode.makeFloat(val)),
                 .field => |field| result = res_copy.concatFieldAccess(field),
                 .op => |op| result = res_copy.concatOp(op),
 
@@ -286,8 +373,8 @@ const ExprNode = union(enum) {
     null,
     ident: []const u8,
     integer: comptime_int,
-    char: comptime_int,
-    float: []const u8,
+    char: Char,
+    float: Number,
     group: *const ExprNode,
     field_access: FieldAccess,
     index_access: IndexAccess,
@@ -313,17 +400,21 @@ const ExprNode = union(enum) {
         return .{ .integer = val };
     }
     fn makeChar(comptime val: comptime_int) ExprNode {
-        return .{ .char = val };
+        return .{ .char = @enumFromInt(val) };
     }
     fn makeFloat(comptime val: anytype) ExprNode {
-        if (std.meta.trait.isZigString(@TypeOf(val))) {
-            return .{ .float = dedupeSlice(u8, val) };
+        comptime {
+            if (std.meta.trait.isZigString(@TypeOf(val))) {
+                return .{ .float = .{ .src = dedupeSlice(u8, val) } };
+            }
+            switch (@typeInfo(@TypeOf(val))) {
+                .ComptimeFloat, .Float => {},
+                else => unreachable,
+            }
+            return .{
+                .float = .{ .src = dedupeSlice(u8, std.fmt.comptimePrint("{}", .{val})) },
+            };
         }
-        switch (@typeInfo(@TypeOf(val))) {
-            .ComptimeFloat, .Float => {},
-            else => unreachable,
-        }
-        return .{ .float = dedupeSlice(u8, std.fmt.comptimePrint("{d:.1}", .{val})) };
     }
     fn makeGroup(comptime expr: ExprNode) ExprNode {
         return .{ .group = &expr };
@@ -462,22 +553,22 @@ const ExprNode = union(enum) {
 
     const dedupe = struct {
         fn dedupe(comptime expr: ExprNode) *const ExprNode {
-            comptime return dedupeImpl(expr, switch (expr) {
-                inline else => |val| val,
-            });
+            // comptime return dedupeImpl(expr, switch (expr) {
+            //     inline else => |val| val,
+            // });
+            return &expr;
         }
         fn dedupeImpl(
             comptime tag: std.meta.FieldEnum(ExprNode),
             comptime value: std.meta.FieldType(ExprNode, tag),
         ) *const ExprNode {
             const res = switch (comptime tag) {
-                .null => ExprNode{ .null = {} },
-                .ident,
-                .float,
-                => @unionInit(ExprNode, @tagName(tag), dedupeSlice(u8, value)),
-                .integer,
+                .null,
                 .char,
-                => @unionInit(ExprNode, @tagName(tag), value),
+                => value,
+                .ident => makeIdent(value),
+                .float => makeFloat(value),
+                .integer => makeInt(value),
                 inline //
                 .field_access,
                 .index_access,
@@ -1022,35 +1113,12 @@ const dedupeSlice = struct {
     }
 }.dedupeSlice;
 
-fn BoundedPackedStack(
-    comptime max_len: comptime_int,
-    comptime T: type,
-) type {
-    return struct {
-        array: PackedArray = PackedArray.initAllTo(std.math.maxInt(Int)),
-        len: std.math.IntFittingRange(0, max_len) = 0,
-        const Self = @This();
-        const Int = std.meta.Int(.unsigned, @bitSizeOf(T));
-        const PackedArray = std.PackedIntArray(Int, max_len);
-
-        pub fn push(stack: *Self, val: T) error{Overflow}!void {
-            if (stack.len == max_len) return error.Overflow;
-            const int: Int = switch (@typeInfo(T)) {
-                .Enum => @bitCast(@intFromEnum(val)),
-                else => @bitCast(val),
-            };
-            stack.array.set(stack.len, int);
-            stack.len += 1;
-        }
-
-        pub fn pop(stack: *Self) ?T {
-            if (stack.len == 0) return null;
-            stack.len -= 1;
-            const int = stack.array.get(stack.len);
-            return switch (@typeInfo(T)) {
-                .Enum => |info| @enumFromInt(@as(info.tag_type, @bitCast(int))),
-                else => @as(T, @bitCast(int)),
-            };
-        }
+fn ImplicitDeref(comptime T: type) type {
+    return switch (@typeInfo(T)) {
+        .Pointer => |info| switch (info.size) {
+            .One => info.child,
+            else => T,
+        },
+        else => T,
     };
 }
