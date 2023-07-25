@@ -28,6 +28,17 @@ test eval {
     //     .y = 1,
     // }));
     try testing.expectEqual(3, eval("a.b", defaultCtx(void{}), .{ .a = .{ .b = 3 } }));
+
+    const PowCtx = struct {
+        pub fn EvalBinOp(comptime Lhs: type, comptime op: BinaryOp, comptime Rhs: type) type {
+            _ = op;
+            return @TypeOf(@as(Lhs, 0), @as(Rhs, 0));
+        }
+        pub inline fn evalBinOp(_: @This(), lhs: anytype, comptime op: BinaryOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+            return std.math.pow(@TypeOf(lhs, rhs), lhs, rhs);
+        }
+    };
+    try testing.expectEqual(64, eval("a ^ 3", defaultCtx(PowCtx{}), .{ .a = @as(u64, 4) }));
 }
 
 pub inline fn defaultCtx(sub_ctx: anytype) DefaultCtx(@TypeOf(sub_ctx)) {
@@ -55,7 +66,7 @@ pub fn DefaultCtx(
                 @as(Rhs, undefined),
             );
         }
-        pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: BinaryOp, rhs: anytype) EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+        pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: BinaryOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
             const Rhs = @TypeOf(rhs);
             if (meaningful_subctx and @hasDecl(SubCtx, "EvalBinOp")) {
@@ -92,7 +103,7 @@ pub fn DefaultCtx(
             }
             return std.meta.Elem(Lhs);
         }
-        pub inline fn evalIndexAccess(ctx: Self, lhs: anytype, rhs: anytype) EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
+        pub inline fn evalIndexAccess(ctx: Self, lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
             const Rhs = @TypeOf(rhs);
 
@@ -113,7 +124,7 @@ pub fn DefaultCtx(
             }
             return std.meta.FieldType(Lhs, @field(std.meta.FieldEnum(Lhs), field));
         }
-        pub inline fn evalProperty(ctx: Self, lhs: anytype, comptime field: []const u8) EvalProperty(@TypeOf(lhs), field) {
+        pub inline fn evalProperty(ctx: Self, lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field) {
             const Lhs = @TypeOf(lhs);
             if (meaningful_subctx and @hasDecl(SubCtx, "EvalProperty")) {
                 const Res = SubCtx.EvalProperty(Lhs, field);
