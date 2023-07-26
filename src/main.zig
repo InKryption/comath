@@ -5,8 +5,8 @@ pub inline fn eval(
     comptime expr: []const u8,
     ctx: anytype,
     inputs: anytype,
-) !EvalImpl(parseExpr(expr), @TypeOf(ctx), @TypeOf(inputs)) {
-    const root = comptime parseExpr(expr);
+) !EvalImpl(parseExpr(expr, @TypeOf(ctx).precedence), @TypeOf(ctx), @TypeOf(inputs)) {
+    const root = comptime parseExpr(expr, @TypeOf(ctx).precedence);
     return evalImpl(root, ctx, inputs);
 }
 
@@ -34,11 +34,11 @@ test eval {
     try testing.expectEqual(3, eval("a.b", defaultCtx(void{}), .{ .a = .{ .b = 3 } }));
 
     const PowCtx = struct {
-        pub fn EvalBinOp(comptime Lhs: type, comptime op: BinaryOp, comptime Rhs: type) type {
+        pub fn EvalBinOp(comptime Lhs: type, comptime op: Operator, comptime Rhs: type) type {
             _ = op;
             return @TypeOf(@as(Lhs, 0), @as(Rhs, 0));
         }
-        pub inline fn evalBinOp(_: @This(), lhs: anytype, comptime op: BinaryOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+        pub inline fn evalBinOp(_: @This(), lhs: anytype, comptime op: Operator, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
             return std.math.pow(@TypeOf(lhs, rhs), lhs, rhs);
         }
     };
@@ -58,6 +58,27 @@ pub fn DefaultCtx(
         const meaningful_subctx = switch (@typeInfo(ImplicitDeref(SubCtx))) {
             .Struct, .Union, .Enum, .Opaque => true,
             else => false,
+        };
+
+        pub const precedence = Operator.PrecedenceValues{
+            .@"~" = null,
+            .@"^" = 5,
+            .@"|" = 4,
+            .@"&" = 4,
+
+            .@"+" = 2,
+            .@"-" = 2,
+            .@"*" = 3,
+            .@"/" = 3,
+            .@"%" = 3,
+
+            .@"!" = null,
+            .@"==" = -1,
+            .@"!=" = -1,
+            .@"<" = -1,
+            .@">" = -1,
+            .@"<=" = -1,
+            .@">=" = -1,
         };
 
         pub fn EvalIndexAccess(
@@ -100,14 +121,14 @@ pub fn DefaultCtx(
             return @field(lhs, field);
         }
 
-        pub fn EvalUnOp(comptime op: UnaryOp, comptime Val: type) type {
+        pub fn EvalUnOp(comptime op: Operator, comptime Val: type) type {
             if (meaningful_subctx and @hasDecl(SubCtx, "EvalUnOp")) {
                 const Res = SubCtx.EvalUnOp(op, Val);
                 if (Res != noreturn) return Res;
             }
             return Val;
         }
-        pub fn evalUnOp(ctx: Self, comptime op: UnaryOp, val: anytype) !EvalUnOp(op, @TypeOf(val)) {
+        pub fn evalUnOp(ctx: Self, comptime op: Operator, val: anytype) !EvalUnOp(op, @TypeOf(val)) {
             const Val = @TypeOf(val);
             if (meaningful_subctx and @hasDecl(SubCtx, "EvalUnOp")) {
                 const Res = SubCtx.EvalUnOp(op, Val);
@@ -117,10 +138,11 @@ pub fn DefaultCtx(
                 .@"~" => ~val,
                 .@"-" => -val,
                 .@"!" => !val,
+                else => comptime unreachable,
             };
         }
 
-        pub fn EvalBinOp(comptime Lhs: type, comptime op: BinaryOp, comptime Rhs: type) type {
+        pub fn EvalBinOp(comptime Lhs: type, comptime op: Operator, comptime Rhs: type) type {
             if (meaningful_subctx and @hasDecl(SubCtx, "EvalBinOp")) {
                 const Res = SubCtx.EvalBinOp(Lhs, op, Rhs);
                 if (Res != noreturn) return Res;
@@ -130,7 +152,7 @@ pub fn DefaultCtx(
                 @as(Rhs, undefined),
             );
         }
-        pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: BinaryOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+        pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: Operator, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
             const Rhs = @TypeOf(rhs);
             if (meaningful_subctx and @hasDecl(SubCtx, "EvalBinOp")) {
@@ -138,6 +160,9 @@ pub fn DefaultCtx(
                 if (Res != noreturn) return ctx.sub_ctx.evalBinOp(lhs, op, rhs);
             }
             return switch (op) {
+                .@"~" => comptime unreachable,
+                .@"!" => comptime unreachable,
+
                 .@"^" => lhs ^ rhs,
                 .@"|" => lhs | rhs,
                 .@"&" => lhs & rhs,
@@ -175,12 +200,8 @@ pub const Char = enum(comptime_int) {
     _,
 };
 
-pub const UnaryOp = enum {
+pub const Operator = enum {
     @"~",
-    @"-",
-    @"!",
-};
-pub const BinaryOp = enum {
     @"^",
     @"|",
     @"&",
@@ -191,6 +212,7 @@ pub const BinaryOp = enum {
     @"/",
     @"%",
 
+    @"!",
     @"==",
     @"!=",
     @"<",
@@ -198,24 +220,7 @@ pub const BinaryOp = enum {
     @"<=",
     @">=",
 
-    const precedence = std.enums.directEnumArray(BinaryOp, comptime_int, 0, .{
-        .@"^" = 5,
-        .@"|" = 4,
-        .@"&" = 4,
-
-        .@"+" = 2,
-        .@"-" = 2,
-        .@"*" = 3,
-        .@"/" = 3,
-        .@"%" = 3,
-
-        .@"==" = -1,
-        .@"!=" = -1,
-        .@"<" = -1,
-        .@">" = -1,
-        .@"<=" = -1,
-        .@">=" = -1,
-    });
+    pub const PrecedenceValues = std.enums.EnumFieldStruct(Operator, ?comptime_int, null);
 };
 
 fn EvalImpl(
@@ -296,13 +301,13 @@ inline fn evalImpl(
     };
 }
 
-fn parseExpr(comptime expr: []const u8) ExprNode {
+fn parseExpr(
+    comptime expr: []const u8,
+    comptime precedence: Operator.PrecedenceValues,
+) ExprNode {
     comptime {
-        const res = parseExprImpl(
-            dedupeSlice(u8, expr),
-            .none,
-            .{},
-        );
+        const deduped_expr = dedupeSlice(u8, expr);
+        const res = parseExprImpl(deduped_expr, precedence, .none, .{});
         return res.result;
     }
 }
@@ -324,14 +329,14 @@ test parseExpr {
         inline fn group(comptime expr: ExprNode) ExprNode {
             return .{ .group = &expr };
         }
-        inline fn binOp(comptime lhs: ExprNode, comptime op: BinaryOp, comptime rhs: ExprNode) ExprNode {
+        inline fn binOp(comptime lhs: ExprNode, comptime op: Operator, comptime rhs: ExprNode) ExprNode {
             return .{ .bin_op = .{
                 .lhs = &lhs,
                 .op = op,
                 .rhs = &rhs,
             } };
         }
-        inline fn unOp(comptime op: UnaryOp, comptime expr: ExprNode) ExprNode {
+        inline fn unOp(comptime op: Operator, comptime expr: ExprNode) ExprNode {
             return .{ .un_op = .{
                 .op = op,
                 .val = &expr,
@@ -351,13 +356,13 @@ test parseExpr {
         }
     };
 
-    try std.testing.expectEqualDeep(parseExpr("423_324"), helper.int(423_324));
-    try std.testing.expectEqualDeep(parseExpr("-423_324"), helper.unOp(.@"-", helper.int(423_324)));
-    try std.testing.expectEqualDeep(parseExpr("~-423_324"), helper.unOp(.@"~", helper.unOp(.@"-", helper.int(423_324))));
-    try std.testing.expectEqualDeep(parseExpr("~(-423_324)"), helper.unOp(.@"~", helper.group(helper.unOp(.@"-", helper.int(423_324)))));
-    try std.testing.expectEqualDeep(parseExpr("a.b"), helper.fieldAccess(helper.ident("a"), "b"));
-    try std.testing.expectEqualDeep(parseExpr("a[b]"), helper.indexAccess(helper.ident("a"), helper.ident("b")));
-    try std.testing.expectEqualDeep(parseExpr("!('\u{A0}' + a ^ (3 / y.z))"), helper.unOp(.@"!", helper.group(helper.binOp(
+    try std.testing.expectEqualDeep(parseExpr("423_324", DefaultCtx(void).precedence), helper.int(423_324));
+    try std.testing.expectEqualDeep(parseExpr("-423_324", DefaultCtx(void).precedence), helper.unOp(.@"-", helper.int(423_324)));
+    try std.testing.expectEqualDeep(parseExpr("~-423_324", DefaultCtx(void).precedence), helper.unOp(.@"~", helper.unOp(.@"-", helper.int(423_324))));
+    try std.testing.expectEqualDeep(parseExpr("~(-423_324)", DefaultCtx(void).precedence), helper.unOp(.@"~", helper.group(helper.unOp(.@"-", helper.int(423_324)))));
+    try std.testing.expectEqualDeep(parseExpr("a.b", DefaultCtx(void).precedence), helper.fieldAccess(helper.ident("a"), "b"));
+    try std.testing.expectEqualDeep(parseExpr("a[b]", DefaultCtx(void).precedence), helper.indexAccess(helper.ident("a"), helper.ident("b")));
+    try std.testing.expectEqualDeep(parseExpr("!('\u{A0}' + a ^ (3 / y.z))", DefaultCtx(void).precedence), helper.unOp(.@"!", helper.group(helper.binOp(
         helper.char('\u{A0}'),
         .@"+",
         helper.binOp(
@@ -366,22 +371,22 @@ test parseExpr {
             helper.group(helper.binOp(helper.int(3), .@"/", helper.fieldAccess(helper.ident("y"), "z"))),
         ),
     ))));
-    try std.testing.expectEqualDeep(parseExpr("3 + -2"), helper.binOp(
+    try std.testing.expectEqualDeep(parseExpr("3 + -2", DefaultCtx(void).precedence), helper.binOp(
         helper.int(3),
         .@"+",
         helper.unOp(.@"-", helper.int(2)),
     ));
-    try std.testing.expectEqualDeep(parseExpr("(y + 2) * x"), helper.binOp(
+    try std.testing.expectEqualDeep(parseExpr("(y + 2) * x", DefaultCtx(void).precedence), helper.binOp(
         helper.group(helper.binOp(helper.ident("y"), .@"+", helper.int(2))),
         .@"*",
         helper.ident("x"),
     ));
-    try std.testing.expectEqualDeep(parseExpr("y + 2 * x"), helper.binOp(
+    try std.testing.expectEqualDeep(parseExpr("y + 2 * x", DefaultCtx(void).precedence), helper.binOp(
         helper.ident("y"),
         .@"+",
         helper.binOp(helper.int(2), .@"*", helper.ident("x")),
     ));
-    try std.testing.expectEqualDeep(parseExpr("2.0 * y ^ 3"), helper.binOp(
+    try std.testing.expectEqualDeep(parseExpr("2.0 * y ^ 3", DefaultCtx(void).precedence), helper.binOp(
         helper.float("2.0"),
         .@"*",
         helper.binOp(helper.ident("y"), .@"^", helper.int(3)),
@@ -395,6 +400,7 @@ const ParseExprImplInnerUpdate = struct {
 };
 fn parseExprImpl(
     comptime expr: []const u8,
+    comptime precedence: Operator.PrecedenceValues,
     comptime nest_type: NestType,
     comptime tokenizer_init: Tokenizer,
 ) ParseExprImplInnerUpdate {
@@ -411,10 +417,10 @@ fn parseExprImpl(
                 .char => |val| result = res_copy.concatExpr(.{ .char = @enumFromInt(val) }),
                 .float => |val| result = res_copy.concatExpr(.{ .float = Number{ .src = val } }),
                 .field => |field| result = res_copy.concatFieldAccess(field),
-                .op => |op| result = res_copy.concatOp(op),
+                .op => |op| result = res_copy.concatOp(op, precedence),
 
                 .paren_open => {
-                    const update = parseExprImpl(expr, .paren, tokenizer);
+                    const update = parseExprImpl(expr, precedence, .paren, tokenizer);
                     tokenizer = update.tokenizer;
                     result = res_copy.concatExpr(.{ .group = update.result.dedupe() });
                 },
@@ -424,7 +430,7 @@ fn parseExprImpl(
                 },
 
                 .bracket_open => {
-                    const update = parseExprImpl(expr, .bracket, tokenizer);
+                    const update = parseExprImpl(expr, precedence, .bracket, tokenizer);
                     tokenizer = update.tokenizer;
                     result = .{ .index_access = &.{
                         .accessed = res_copy,
@@ -456,10 +462,14 @@ const ExprNode = union(enum) {
     bin_op: BinOp,
     un_op: UnOp,
 
-    inline fn concatOp(comptime base: ExprNode, comptime op: Operator) ExprNode {
+    inline fn concatOp(
+        comptime base: ExprNode,
+        comptime op: Operator,
+        comptime precedence: Operator.PrecedenceValues,
+    ) ExprNode {
         return switch (base) {
             .null => .{ .un_op = .{
-                .op = std.enums.nameCast(UnaryOp, op),
+                .op = std.enums.nameCast(Operator, op),
                 .val = ExprNode.dedupe(.null),
             } },
 
@@ -472,7 +482,7 @@ const ExprNode = union(enum) {
             .group,
             => .{ .bin_op = .{
                 .lhs = base.dedupe(),
-                .op = std.enums.nameCast(BinaryOp, op),
+                .op = std.enums.nameCast(Operator, op),
                 .rhs = ExprNode.dedupe(.null),
             } },
 
@@ -481,7 +491,7 @@ const ExprNode = union(enum) {
                     .lhs = bin.lhs,
                     .op = bin.op,
                     .rhs = ExprNode.dedupe(.{ .un_op = .{
-                        .op = std.enums.nameCast(UnaryOp, op),
+                        .op = std.enums.nameCast(Operator, op),
                         .val = ExprNode.dedupe(.null),
                     } }),
                 } },
@@ -494,8 +504,8 @@ const ExprNode = union(enum) {
                 .float,
                 .group,
                 => blk: {
-                    const old_prec = BinaryOp.precedence[@intFromEnum(bin.op)];
-                    const new_prec = BinaryOp.precedence[@intFromEnum(op)];
+                    const old_prec = @field(precedence, @tagName(bin.op)) orelse @compileError(@tagName(bin.op) ++ " is not a binary operator");
+                    const new_prec = @field(precedence, @tagName(op)) orelse @compileError(@tagName(op) ++ " is not a binary operator");
                     if (old_prec < 0 and new_prec < 0) {
                         @compileError(@tagName(bin.op) ++ " cannot be chained with " ++ @tagName(op));
                     }
@@ -505,14 +515,14 @@ const ExprNode = union(enum) {
                             .op = bin.op,
                             .rhs = ExprNode.dedupe(.{ .bin_op = .{
                                 .lhs = bin.rhs,
-                                .op = std.enums.nameCast(BinaryOp, op),
+                                .op = std.enums.nameCast(Operator, op),
                                 .rhs = ExprNode.dedupe(.null),
                             } }),
                         } };
                     }
                     break :blk .{ .bin_op = .{
                         .lhs = base.dedupe(),
-                        .op = std.enums.nameCast(BinaryOp, op),
+                        .op = std.enums.nameCast(Operator, op),
                         .rhs = ExprNode.dedupe(.null),
                     } };
                 },
@@ -665,7 +675,7 @@ const ExprNode = union(enum) {
     };
     const BinOp = struct {
         lhs: *const ExprNode,
-        op: BinaryOp,
+        op: Operator,
         rhs: *const ExprNode,
 
         inline fn dedupe(comptime bin: BinOp) BinOp {
@@ -677,7 +687,7 @@ const ExprNode = union(enum) {
         }
     };
     const UnOp = struct {
-        op: UnaryOp,
+        op: Operator,
         val: *const ExprNode,
 
         inline fn dedupe(comptime un: UnOp) UnOp {
@@ -705,7 +715,7 @@ const ExprNode = union(enum) {
             if (un.concatOpInnerImpl(op)) |updated| {
                 return ExprNode.dedupe(.{ .un_op = updated });
             }
-            const op_tag = std.enums.nameCast(BinaryOp, op);
+            const op_tag = std.enums.nameCast(Operator, op);
             return .{ .bin_op = .{
                 .lhs = ExprNode.dedupe(.{ .un_op = un }),
                 .op = op_tag,
@@ -720,7 +730,7 @@ const ExprNode = union(enum) {
                 .null => return .{
                     .op = un.op,
                     .val = ExprNode.dedupe(.{ .un_op = .{
-                        .op = std.enums.nameCast(UnaryOp, op),
+                        .op = std.enums.nameCast(Operator, op),
                         .val = ExprNode.dedupe(.null),
                     } }),
                 },
@@ -762,48 +772,6 @@ const ExprNode = union(enum) {
             try writer.writeAll(str);
         }
     };
-};
-
-const Operator = enum {
-    @"~",
-    @"^",
-    @"|",
-    @"&",
-
-    @"+",
-    @"-",
-    @"*",
-    @"/",
-    @"%",
-
-    @"!",
-    @"==",
-    @"!=",
-    @"<",
-    @">",
-    @"<=",
-    @">=",
-
-    const precedence = std.enums.directEnumArray(Operator, ?comptime_int, 0, .{
-        .@"~" = null,
-        .@"^" = 5,
-        .@"|" = 4,
-        .@"&" = 4,
-
-        .@"+" = 2,
-        .@"-" = 2,
-        .@"*" = 3,
-        .@"/" = 3,
-        .@"%" = 3,
-
-        .@"!" = null,
-        .@"==" = -1,
-        .@"!=" = -1,
-        .@"<" = -1,
-        .@">" = -1,
-        .@"<=" = -1,
-        .@">=" = -1,
-    });
 };
 
 const Token = union(enum) {
