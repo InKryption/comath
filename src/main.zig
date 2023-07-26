@@ -61,18 +61,23 @@ pub fn DefaultCtx(
         };
 
         pub const precedence = Operator.PrecedenceValues{
+            // non-binary operators
             .@"~" = null,
-            .@"^" = 5,
+            .@"!" = null,
+
+            // bit operators have higher precedence than the arithmetic operators
+            .@"^" = 4,
             .@"|" = 4,
             .@"&" = 4,
 
-            .@"+" = 2,
-            .@"-" = 2,
+            // typical arithmetic precedence
             .@"*" = 3,
             .@"/" = 3,
             .@"%" = 3,
+            .@"+" = 2,
+            .@"-" = 2,
 
-            .@"!" = null,
+            // make comparison operators non-chainable
             .@"==" = -1,
             .@"!=" = -1,
             .@"<" = -1,
