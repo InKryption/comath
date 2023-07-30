@@ -2,6 +2,10 @@ const std = @import("std");
 const Build = std.Build;
 
 pub fn build(b: *Build) void {
+    _ = b.addModule("eval", .{
+        .source_file = Build.FileSource.relative("src/main.zig"),
+    });
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
