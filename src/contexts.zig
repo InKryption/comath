@@ -1,6 +1,5 @@
 const std = @import("std");
-const util = @import("util.zig");
-
+const util = @import("util");
 const eval = @import("eval");
 
 pub inline fn simpleCtx(sub_ctx: anytype) SimpleCtx(@TypeOf(sub_ctx)) {

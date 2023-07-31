@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const util = @import("util.zig");
+const util = @import("util");
 
 const Tokenizer = @This();
 index: comptime_int = 0,
