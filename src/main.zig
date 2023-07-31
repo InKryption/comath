@@ -2,17 +2,19 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const util = @import("util.zig");
-
 const Tokenizer = @import("Tokenizer.zig");
 const parse = @import("parse.zig");
+
+pub const Char = parse.Char;
+pub const Number = parse.Number;
+pub const operator = @import("operator.zig");
+pub const contexts = @import("contexts.zig");
+
 comptime {
     _ = Tokenizer;
     _ = parse;
+    _ = contexts;
 }
-
-pub const operator = @import("operator.zig");
-pub const Char = parse.Char;
-pub const Number = parse.Number;
 
 /// Evaluates `expr` as an expression, wherein the operations are defined
 /// by `ctx`, and the values of variables may be set via `inputs`.
@@ -35,6 +37,95 @@ pub fn Eval(
     const Ns = util.ImplicitDeref(Ctx);
     const root = parse.parseExpr(expr, Ns.UnOp, Ns.BinOp, Ns.relations);
     return EvalImpl(root, Ctx, Inputs);
+}
+
+fn EvalImpl(
+    comptime expr: parse.ExprNode,
+    comptime Ctx: type,
+    comptime Inputs: type,
+) type {
+    const UnOp = Ctx.UnOp;
+    const BinOp = Ctx.BinOp;
+
+    const EvalProperty = Ctx.EvalProperty;
+    const EvalIndexAccess = Ctx.EvalIndexAccess;
+    const EvalUnOp = Ctx.EvalUnOp;
+    const EvalBinOp = Ctx.EvalBinOp;
+
+    return switch (expr) {
+        .null => @compileError("Incomplete AST (encountered null expression)"),
+        .ident => |ident| std.meta.FieldType(Inputs, @field(std.meta.FieldEnum(Inputs), ident)),
+        .integer => comptime_int,
+        .char => Char,
+        .float => Number,
+        .group => |group| EvalImpl(group.*, Ctx, Inputs),
+        .field_access => |fa| blk: {
+            const Lhs = EvalImpl(fa.accessed.*, Ctx, Inputs);
+            break :blk EvalProperty(Lhs, util.dedupeSlice(u8, fa.accessor));
+        },
+        .index_access => |ia| blk: {
+            const Lhs = EvalImpl(ia.accessed, Ctx, Inputs);
+            const Rhs = EvalImpl(ia.accessor, Ctx, Inputs);
+            break :blk EvalIndexAccess(Lhs, Rhs);
+        },
+        .un_op => |un| blk: {
+            const Val = EvalImpl(un.val.*, Ctx, Inputs);
+            break :blk EvalUnOp(@field(UnOp, un.op), Val);
+        },
+        .bin_op => |bin| blk: {
+            const Lhs = EvalImpl(bin.lhs.*, Ctx, Inputs);
+            const Rhs = EvalImpl(bin.rhs.*, Ctx, Inputs);
+            break :blk EvalBinOp(Lhs, @field(BinOp, bin.op), Rhs);
+        },
+    };
+}
+
+inline fn evalImpl(
+    comptime expr: parse.ExprNode,
+    ctx: anytype,
+    inputs: anytype,
+) !EvalImpl(expr, @TypeOf(ctx), @TypeOf(inputs)) {
+    const Ctx = @TypeOf(ctx);
+    const UnOp = Ctx.UnOp;
+    const BinOp = Ctx.BinOp;
+
+    const Inputs = @TypeOf(inputs);
+    return switch (comptime expr) {
+        .null => @compileError("Incomplete AST (encountered null expression)"),
+        .ident => |ident| @field(inputs, ident),
+        .integer => |int| int,
+        .char => |char| char,
+        .float => |num| num,
+        .group => |group| evalImpl(group.*, ctx, inputs),
+        .field_access => |fa| blk: {
+            const Lhs = EvalImpl(fa.accessed.*, Ctx, Inputs);
+            const lhs: Lhs = try evalImpl(fa.accessed.*, ctx, inputs);
+            break :blk ctx.evalProperty(lhs, util.dedupeSlice(u8, fa.accessor));
+        },
+        .index_access => |ia| blk: {
+            const Lhs = EvalImpl(ia.accessed, Ctx, Inputs);
+            const lhs: Lhs = try evalImpl(ia.accessed, ctx, inputs);
+
+            const Rhs = EvalImpl(ia.accessor, Ctx, Inputs);
+            const rhs: Rhs = try evalImpl(ia.accessor, ctx, inputs);
+
+            break :blk ctx.evalIndexAccess(lhs, rhs);
+        },
+        .un_op => |un| blk: {
+            const Val = EvalImpl(un.val.*, Ctx, Inputs);
+            const val: Val = try evalImpl(un.val.*, ctx, inputs);
+            break :blk ctx.evalUnOp(@field(UnOp, un.op), val);
+        },
+        .bin_op => |bin| blk: {
+            const Lhs = EvalImpl(bin.lhs.*, Ctx, Inputs);
+            const lhs: Lhs = try evalImpl(bin.lhs.*, ctx, inputs);
+
+            const Rhs = EvalImpl(bin.rhs.*, Ctx, Inputs);
+            const rhs: Rhs = try evalImpl(bin.rhs.*, ctx, inputs);
+
+            break :blk ctx.evalBinOp(lhs, @field(BinOp, bin.op), rhs);
+        },
+    };
 }
 
 test eval {
@@ -111,6 +202,10 @@ test eval {
             .@"^" = .{ .prec = 0, .assoc = .right },
         };
 
+        pub const EvalProperty = opaque {};
+        pub const EvalIndexAccess = opaque {};
+        pub const EvalUnOp = opaque {};
+
         pub fn EvalBinOp(comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type {
             _ = op;
             return @TypeOf(@as(Lhs, 0), @as(Rhs, 0));
@@ -120,89 +215,4 @@ test eval {
         }
     };
     try util.testing.expectEqual(64, eval("a ^ 3", PowCtx{}, .{ .a = @as(u64, 4) }));
-}
-
-fn EvalImpl(
-    comptime expr: parse.ExprNode,
-    comptime Ctx: type,
-    comptime Inputs: type,
-) type {
-    const UnOp = Ctx.UnOp;
-    const BinOp = Ctx.BinOp;
-
-    const InputTag = std.meta.FieldEnum(Inputs);
-    return switch (expr) {
-        .null => @compileError("Incomplete AST (encountered null expression)"),
-        .ident => |ident| std.meta.FieldType(Inputs, @field(InputTag, ident)),
-        .integer => comptime_int,
-        .char => Char,
-        .float => Number,
-        .group => |group| EvalImpl(group.*, Ctx, Inputs),
-        .field_access => |fa| blk: {
-            const Lhs = EvalImpl(fa.accessed.*, Ctx, Inputs);
-            break :blk Ctx.EvalProperty(Lhs, util.dedupeSlice(u8, fa.accessor));
-        },
-        .index_access => |ia| blk: {
-            const Lhs = EvalImpl(ia.accessed, Ctx, Inputs);
-            const Rhs = EvalImpl(ia.accessor, Ctx, Inputs);
-            break :blk Ctx.EvalIndexAccess(Lhs, Rhs);
-        },
-        .un_op => |un| blk: {
-            const Val = EvalImpl(un.val.*, Ctx, Inputs);
-            break :blk Ctx.EvalUnOp(@field(UnOp, un.op), Val);
-        },
-        .bin_op => |bin| blk: {
-            const Lhs = EvalImpl(bin.lhs.*, Ctx, Inputs);
-            const Rhs = EvalImpl(bin.rhs.*, Ctx, Inputs);
-            break :blk Ctx.EvalBinOp(Lhs, @field(BinOp, bin.op), Rhs);
-        },
-    };
-}
-
-inline fn evalImpl(
-    comptime expr: parse.ExprNode,
-    ctx: anytype,
-    inputs: anytype,
-) !EvalImpl(expr, @TypeOf(ctx), @TypeOf(inputs)) {
-    const Ctx = @TypeOf(ctx);
-    const UnOp = Ctx.UnOp;
-    const BinOp = Ctx.BinOp;
-
-    const Inputs = @TypeOf(inputs);
-    return switch (comptime expr) {
-        .null => @compileError("Incomplete AST (encountered null expression)"),
-        .ident => |ident| @field(inputs, ident),
-        .integer => |int| int,
-        .char => |char| char,
-        .float => |num| num,
-        .group => |group| evalImpl(group.*, ctx, inputs),
-        .field_access => |fa| blk: {
-            const Lhs = EvalImpl(fa.accessed.*, Ctx, Inputs);
-            const lhs: Lhs = try evalImpl(fa.accessed.*, ctx, inputs);
-            break :blk ctx.evalProperty(lhs, util.dedupeSlice(u8, fa.accessor));
-        },
-        .index_access => |ia| blk: {
-            const Lhs = EvalImpl(ia.accessed, Ctx, Inputs);
-            const lhs: Lhs = try evalImpl(ia.accessed, ctx, inputs);
-
-            const Rhs = EvalImpl(ia.accessor, Ctx, Inputs);
-            const rhs: Rhs = try evalImpl(ia.accessor, ctx, inputs);
-
-            break :blk ctx.evalIndexAccess(lhs, rhs);
-        },
-        .un_op => |un| blk: {
-            const Val = EvalImpl(un.val.*, Ctx, Inputs);
-            const val: Val = try evalImpl(un.val.*, ctx, inputs);
-            break :blk ctx.evalUnOp(@field(UnOp, un.op), val);
-        },
-        .bin_op => |bin| blk: {
-            const Lhs = EvalImpl(bin.lhs.*, Ctx, Inputs);
-            const lhs: Lhs = try evalImpl(bin.lhs.*, ctx, inputs);
-
-            const Rhs = EvalImpl(bin.rhs.*, Ctx, Inputs);
-            const rhs: Rhs = try evalImpl(bin.rhs.*, ctx, inputs);
-
-            break :blk ctx.evalBinOp(lhs, @field(BinOp, bin.op), rhs);
-        },
-    };
 }

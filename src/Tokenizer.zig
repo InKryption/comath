@@ -7,6 +7,12 @@ const Tokenizer = @This();
 index: comptime_int = 0,
 can_be_unary: bool = true,
 
+pub const operator_symbols = [_]u8{
+    '!', '#', '$', '%', '&', '*',
+    '+', '-', '/', '<', '=', '>',
+    '?', '@', '~', '^', '|', ':',
+};
+
 pub inline fn next(
     comptime state: *Tokenizer,
     comptime buffer: []const u8,
@@ -111,11 +117,7 @@ fn peekImpl(
         },
         else => |first_byte| {
             const start = state.index;
-            const symbols_end = util.indexOfNonePosComptime(u8, buffer, start, &.{
-                '!', '#', '$', '%', '&', '*',
-                '+', '-', '/', '<', '=', '>',
-                '?', '@', '~', '^', '|', ':',
-            }) orelse buffer.len;
+            const symbols_end = util.indexOfNonePosComptime(u8, buffer, start, &operator_symbols) orelse buffer.len;
             if (start == symbols_end) @compileError("Unexpected byte '" ++ &.{first_byte} ++ "'");
             var end = symbols_end;
             while (end != start) : (end -= 1) {
@@ -163,7 +165,7 @@ test Tokenizer {
         \\^    ]     |     a_b_C   %
     ,
         &.{
-            .{ .un_op = "~" },  .{ .float = "3.0" },      .{ .bin_op = "+" },    .{ .integer = 3 },           .{ .bin_op = "-" },
+            .{ .un_op = "~" },  .{ .float = "3.0" },      .{ .bin_op = "+" },    .{ .integer = 3 },       .{ .bin_op = "-" },
             .{ .un_op = "-" },  .{ .un_op = "!" },        .{ .paren_open = {} }, .{ .char = 'a' },        .{ .bracket_close = {} },
             .{ .bin_op = "*" }, .{ .paren_close = {} },   .{ .bin_op = "/" },    .{ .bracket_open = {} }, .{ .bracket_close = {} },
             .{ .bin_op = "^" }, .{ .bracket_close = {} }, .{ .bin_op = "|" },    .{ .ident = "a_b_C" },   .{ .bin_op = "%" },

@@ -28,6 +28,21 @@ pub fn parseExpr(
     comptime relations: operator.RelationMap(BinOpEnum),
 ) ExprNode {
     comptime {
+        for (@typeInfo(UnOpEnum).Enum.fields ++ @typeInfo(BinOpEnum).Enum.fields) |field| {
+            const i = util.indexOfNoneComptime(u8, field.name, &Tokenizer.operator_symbols) orelse continue;
+            const list = list: {
+                var str: []const u8 = "";
+                for (Tokenizer.operator_symbols) |sym|
+                    str = str ++ std.fmt.comptimePrint(" * '{c}'\n", .{sym});
+                break :list str;
+            };
+            @compileError(std.fmt.comptimePrint(
+                \\Operator cannot contain byte '{c}' (found in operator '{s}').
+                \\An operator may contain any combination of the following symbols:
+                \\{s}
+            , .{ field.name[i], field.name, list }));
+        }
+
         const deduped_expr = util.dedupeSlice(u8, expr);
         const res = parseExprImpl(deduped_expr, .none, .{}, UnOpEnum, BinOpEnum, relations);
         return res.result;
