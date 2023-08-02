@@ -16,12 +16,46 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
         };
         const Ns = if (significant_ctx) util.ImplicitDeref(SubCtx) else struct {};
 
-        pub const UnOp = enum {};
+        pub const UnOp = enum {
+            @"-",
+        };
         pub const BinOp = enum {
             @"+",
+            @"+|",
+            @"+%",
+
+            @"-",
+            @"-|",
+            @"-%",
+
+            @"*",
+            @"*|",
+            @"*%",
+
+            @"/",
+            @"%",
+
+            @"^",
+            @"@",
         };
         pub const relations: eval.operator.RelationMap(BinOp) = .{
-            .@"+" = .{ .prec = 0, .assoc = .left },
+            .@"+" = .{ .prec = 1, .assoc = .left },
+            .@"+|" = .{ .prec = 1, .assoc = .left },
+            .@"+%" = .{ .prec = 1, .assoc = .left },
+
+            .@"-" = .{ .prec = 1, .assoc = .left },
+            .@"-|" = .{ .prec = 1, .assoc = .left },
+            .@"-%" = .{ .prec = 1, .assoc = .left },
+
+            .@"*" = .{ .prec = 2, .assoc = .left },
+            .@"*|" = .{ .prec = 2, .assoc = .left },
+            .@"*%" = .{ .prec = 2, .assoc = .left },
+
+            .@"/" = .{ .prec = 2, .assoc = .left },
+            .@"%" = .{ .prec = 2, .assoc = .left },
+
+            .@"^" = .{ .prec = 3, .assoc = .right },
+            .@"@" = .{ .prec = 0, .assoc = .left },
         };
 
         pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {
@@ -64,7 +98,9 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                     return Ns.EvalUnOp(op, T);
                 }
             }
-            return T;
+            return switch (op) {
+                .@"-" => T,
+            };
         }
         pub inline fn evalUnOp(ctx: Self, comptime op: UnOp, val: anytype) EvalUnOp(op, @TypeOf(val)) {
             if (@hasDecl(Ns, "EvalUnOp")) {
@@ -72,7 +108,9 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                     return ctx.evalUnOp(op, val);
                 }
             }
-            return switch (op) {};
+            return switch (op) {
+                .@"-" => -val,
+            };
         }
 
         pub fn EvalBinOp(comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type {
@@ -81,10 +119,27 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                     return Ns.EvalBinOp(Lhs, op, Rhs);
                 }
             }
-            return @TypeOf(
-                @as(Lhs, undefined),
-                @as(Rhs, undefined),
-            );
+            const lhs: Lhs = 0;
+            const rhs: Rhs = 0;
+            return switch (op) {
+                .@"+" => @TypeOf(lhs + rhs),
+                .@"+%" => @TypeOf(lhs +% rhs),
+                .@"+|" => @TypeOf(lhs +| rhs),
+
+                .@"-" => @TypeOf(lhs - rhs),
+                .@"-%" => @TypeOf(lhs -% rhs),
+                .@"-|" => @TypeOf(lhs -| rhs),
+
+                .@"*" => @TypeOf(lhs * rhs),
+                .@"*%" => @TypeOf(lhs *% rhs),
+                .@"*|" => @TypeOf(lhs *| rhs),
+
+                .@"/" => @TypeOf(lhs / rhs),
+                .@"%" => @TypeOf(lhs % rhs),
+
+                .@"^" => @TypeOf(lhs ^ rhs),
+                .@"@" => @compileError("No default implementation for '@'"),
+            };
         }
         pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: BinOp, rhs: anytype) EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
@@ -96,6 +151,34 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
             }
             return switch (op) {
                 .@"+" => lhs + rhs,
+                .@"+%" => lhs +% rhs,
+                .@"+|" => lhs +% rhs,
+
+                .@"-" => lhs - rhs,
+                .@"-%" => lhs -% rhs,
+                .@"-|" => lhs -% rhs,
+
+                .@"*" => lhs * rhs,
+                .@"*%" => lhs *% rhs,
+                .@"*|" => lhs *% rhs,
+
+                .@"/" => lhs / rhs,
+                .@"%" => lhs % rhs,
+
+                .@"^" => blk: {
+                    const T = @TypeOf(lhs, rhs);
+                    comptime if (T == comptime_int or
+                        T == comptime_float)
+                    {
+                        @setEvalBranchQuota(@min(std.math.maxInt(u32), rhs * 10));
+                        var x: T = 1;
+                        for (0..rhs) |_| x *= lhs;
+                        break :blk x;
+                    };
+
+                    break :blk std.math.pow(T, lhs, rhs);
+                },
+                .@"@" => comptime unreachable,
             };
         }
     };
@@ -103,4 +186,6 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
 
 test simpleCtx {
     try util.testing.expectEqual(5, eval.eval("a + b", simpleCtx({}), .{ .a = 2, .b = 3 }));
+    try util.testing.expectEqual(1, eval.eval("a +% b", simpleCtx({}), .{ .a = @as(u8, std.math.maxInt(u8)), .b = 2 }));
+    try util.testing.expectEqual(387420489, eval.eval("3^(2 * a + b)", simpleCtx({}), .{ .a = 7, .b = 4 }));
 }
