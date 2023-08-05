@@ -29,7 +29,7 @@ pub fn parseExpr(
 ) ExprNode {
     comptime {
         for (@typeInfo(UnOpEnum).Enum.fields ++ @typeInfo(BinOpEnum).Enum.fields) |field| {
-            const i = util.indexOfNoneComptime(u8, field.name, &Tokenizer.operator_symbols) orelse continue;
+            const i = util.indexOfNoneComptime(u8, field.name, Tokenizer.operator_characters) orelse continue;
             const list = list: {
                 var str: []const u8 = "";
                 for (Tokenizer.operator_symbols) |sym|

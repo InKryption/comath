@@ -7,11 +7,16 @@ const Tokenizer = @This();
 index: comptime_int = 0,
 can_be_unary: bool = true,
 
-pub const operator_symbols = [_]u8{
+pub const operator_characters: []const u8 = &[_]u8{
     '!', '#', '$', '%', '&', '*',
     '+', '-', '/', '<', '=', '>',
     '?', '@', '~', '^', '|', ':',
 };
+pub const identifier_characters: []const u8 =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ" ++ //
+    "abcdefghijklmnopqrstuvwxyz" ++ //
+    "0123456789" ++ "_" //
+;
 
 pub inline fn next(
     comptime state: *Tokenizer,
@@ -65,7 +70,7 @@ fn peekImpl(
         '_',
         => {
             const start = state.index;
-            const end = endOfIdent(buffer, start);
+            const end = util.indexOfNonePosComptime(u8, buffer, start + 1, identifier_characters) orelse buffer.len;
             const ident = buffer[start..end];
             return .{
                 .state = .{ .index = end, .can_be_unary = false },
@@ -74,7 +79,7 @@ fn peekImpl(
         },
         '.' => {
             const start = state.index + 1;
-            const end = endOfIdent(buffer, start);
+            const end = util.indexOfNonePosComptime(u8, buffer, start + 1, identifier_characters ++ operator_characters) orelse buffer.len;
             const ident = buffer[start..end];
             if (ident.len == 0) @compileError("Expected identifier following period");
             return .{
@@ -117,7 +122,7 @@ fn peekImpl(
         },
         else => |first_byte| {
             const start = state.index;
-            const symbols_end = util.indexOfNonePosComptime(u8, buffer, start, &operator_symbols) orelse buffer.len;
+            const symbols_end = util.indexOfNonePosComptime(u8, buffer, start, operator_characters) orelse buffer.len;
             if (start == symbols_end) @compileError("Unexpected byte '" ++ &.{first_byte} ++ "'");
             var end = symbols_end;
             while (end != start) : (end -= 1) {
@@ -130,16 +135,6 @@ fn peekImpl(
         },
     }
     return null;
-}
-inline fn endOfIdent(
-    comptime buffer: []const u8,
-    comptime start: comptime_int,
-) comptime_int {
-    return util.indexOfNonePosComptime(u8, buffer, start + 1, //
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ" ++ //
-        "abcdefghijklmnopqrstuvwxyz" ++ //
-        "0123456789" ++ "_" //
-    ) orelse buffer.len;
 }
 
 fn testTokenizer(
@@ -159,16 +154,18 @@ test Tokenizer {
     try testTokenizer(
         enum { @"-", @"!", @"~" },
         enum { @"-", @"+", @"*", @"/", @"%", @"^", @"|" },
-        \\~    3.0   +       3     -
-        \\-    !     (       'a'   ]
-        \\*    )     /       [     ]
-        \\^    ]     |     a_b_C   %
+        \\~      3.0    +       3     -
+        \\-      !      (       'a'   ]
+        \\*      )      /       [     ]
+        \\^      ]      |     a_b_C   %
+        \\.foo   .b@r   .?
     ,
         &.{
-            .{ .un_op = "~" },  .{ .float = "3.0" },      .{ .bin_op = "+" },    .{ .integer = 3 },       .{ .bin_op = "-" },
-            .{ .un_op = "-" },  .{ .un_op = "!" },        .{ .paren_open = {} }, .{ .char = 'a' },        .{ .bracket_close = {} },
-            .{ .bin_op = "*" }, .{ .paren_close = {} },   .{ .bin_op = "/" },    .{ .bracket_open = {} }, .{ .bracket_close = {} },
-            .{ .bin_op = "^" }, .{ .bracket_close = {} }, .{ .bin_op = "|" },    .{ .ident = "a_b_C" },   .{ .bin_op = "%" },
+            .{ .un_op = "~" },   .{ .float = "3.0" },      .{ .bin_op = "+" },    .{ .integer = 3 },       .{ .bin_op = "-" },
+            .{ .un_op = "-" },   .{ .un_op = "!" },        .{ .paren_open = {} }, .{ .char = 'a' },        .{ .bracket_close = {} },
+            .{ .bin_op = "*" },  .{ .paren_close = {} },   .{ .bin_op = "/" },    .{ .bracket_open = {} }, .{ .bracket_close = {} },
+            .{ .bin_op = "^" },  .{ .bracket_close = {} }, .{ .bin_op = "|" },    .{ .ident = "a_b_C" },   .{ .bin_op = "%" },
+            .{ .field = "foo" }, .{ .field = "b@r" },      .{ .field = "?" },
         },
     );
 
