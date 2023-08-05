@@ -141,8 +141,9 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                     return Ns.EvalBinOp(Lhs, op, Rhs);
                 }
             }
-            const lhs: Lhs = 0;
-            const rhs: Rhs = 0;
+
+            const lhs: Lhs = std.mem.zeroes(Lhs);
+            const rhs: Rhs = std.mem.zeroes(Rhs);
             return switch (op) {
                 .@"+" => @TypeOf(lhs + rhs),
                 .@"+%" => @TypeOf(lhs +% rhs),
@@ -160,7 +161,9 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                 .@"%" => @TypeOf(lhs % rhs),
 
                 .@"^" => @TypeOf(lhs ^ rhs),
-                .@"@" => @compileError("No default implementation for '@'"),
+                .@"@" => {
+                    return [rhs.len][lhs[0].len]@TypeOf(lhs[0][0]);
+                },
             };
         }
         pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: BinOp, rhs: anytype) EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
@@ -200,7 +203,28 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
 
                     break :blk std.math.pow(T, lhs, rhs);
                 },
-                .@"@" => comptime unreachable,
+                .@"@" => {
+                    const columns_num = lhs[0].len;
+                    const rows_num = rhs.len;
+                    const T = @TypeOf(lhs[0][0]);
+
+                    var res: [columns_num][rows_num]T = undefined;
+
+                    inline for (rhs, 0..) |prev_column, i| {
+                        var column: @Vector(columns_num, T) = .{0} ** columns_num;
+
+                        inline for (0..lhs.len) |j| {
+                            const mask = ([1]i32{@intCast(j)}) ** columns_num;
+                            var vi = @shuffle(T, prev_column, undefined, mask);
+
+                            vi = vi * lhs[j];
+                            column += vi;
+                        }
+
+                        res[i] = column;
+                    }
+                    return res;
+                },
             };
         }
     };
@@ -210,4 +234,14 @@ test simpleCtx {
     try util.testing.expectEqual(5, eval.eval("a + b", simpleCtx({}), .{ .a = 2, .b = 3 }));
     try util.testing.expectEqual(1, eval.eval("a +% b", simpleCtx({}), .{ .a = @as(u8, std.math.maxInt(u8)), .b = 2 }));
     try util.testing.expectEqual(387420489, eval.eval("3^(2 * a + b)", simpleCtx({}), .{ .a = 7, .b = 4 }));
+
+    try util.testing.expectEqual([2][2]u16{ .{ 140, 320 }, .{ 146, 335 } }, eval.eval("a @ b", simpleCtx({}), .{
+        .a = [3][2]u16{ .{ 1, 4 }, .{ 2, 5 }, .{ 3, 6 } },
+        .b = [2][3]u16{ .{ 10, 20, 30 }, .{ 11, 21, 31 } },
+    }));
+    try util.testing.expectEqual([2][2]u16{ .{ 188, 422 }, .{ 207, 468 } }, eval.eval("a @ b @ c", simpleCtx({}), .{
+        .a = [3][2]u16{ .{ 1, 4 }, .{ 2, 5 }, .{ 3, 6 } },
+        .b = [2][3]u16{ .{ 1, 2, 4 }, .{ 2, 3, 6 } },
+        .c = [2][2]u16{ .{ 8, 2 }, .{ 3, 6 } },
+    }));
 }
