@@ -61,6 +61,7 @@ fn peekImpl(
             fwd_state.index = whitespace_end;
             return fwd_state.peekImpl(buffer, UnOpEnum, BinOpEnum);
         },
+        ',' => return .{ .state = .{ .index = state.index + 1, .can_be_unary = true }, .token = .comma },
         '(' => return .{ .state = .{ .index = state.index + 1, .can_be_unary = true }, .token = .paren_open },
         ')' => return .{ .state = .{ .index = state.index + 1, .can_be_unary = false }, .token = .paren_close },
         '[' => return .{ .state = .{ .index = state.index + 1, .can_be_unary = true }, .token = .bracket_open },
@@ -270,6 +271,8 @@ pub const Token = union(enum) {
     un_op: []const u8,
     bin_op: []const u8,
 
+    /// ','
+    comma,
     /// '('
     paren_open,
     /// ')'

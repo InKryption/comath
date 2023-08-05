@@ -47,6 +47,7 @@ fn EvalImpl(
 
     const EvalProperty = Ctx.EvalProperty;
     const EvalIndexAccess = Ctx.EvalIndexAccess;
+    const EvalFuncCall = Ctx.EvalFuncCall;
     const EvalUnOp = Ctx.EvalUnOp;
     const EvalBinOp = Ctx.EvalBinOp;
 
@@ -66,6 +67,11 @@ fn EvalImpl(
             const Rhs = EvalImpl(ia.accessor, Ctx, Inputs);
             break :blk EvalIndexAccess(Lhs, Rhs);
         },
+        .func_call => |fc| blk: {
+            const Callee = EvalImpl(fc.callee, Ctx, Inputs);
+            const Args = EvalExprTupleImpl(fc.args, Ctx, Inputs);
+            break :blk EvalFuncCall(Callee, Args);
+        },
         .un_op => |un| blk: {
             const Val = EvalImpl(un.val.*, Ctx, Inputs);
             break :blk EvalUnOp(@field(UnOp, un.op), Val);
@@ -76,6 +82,33 @@ fn EvalImpl(
             break :blk EvalBinOp(Lhs, @field(BinOp, bin.op), Rhs);
         },
     };
+}
+fn EvalExprTupleImpl(
+    comptime list: []const parse.ExprNode,
+    comptime Ctx: type,
+    comptime Inputs: type,
+) type {
+    var fields: [list.len]std.builtin.Type.StructField = undefined;
+    for (&fields, list, 0..) |*field, arg, i| {
+        const T = EvalImpl(arg, Ctx, Inputs);
+        field.* = .{
+            .name = std.fmt.comptimePrint("{d}", .{i}),
+            .type = T,
+            .default_value = null,
+            .is_comptime = false,
+            .alignment = 0,
+        };
+        if (@sizeOf(T) == 0) {
+            field.is_comptime = true;
+            field.default_value = &(evalImpl(arg, @as(Ctx, undefined), @as(Inputs, undefined)) catch |err| @compileError(@errorName(err)));
+        }
+    }
+    return @Type(.{ .Struct = .{
+        .layout = .Auto,
+        .decls = &.{},
+        .is_tuple = true,
+        .fields = &fields,
+    } });
 }
 
 inline fn evalImpl(
@@ -108,6 +141,21 @@ inline fn evalImpl(
             const rhs: Rhs = try evalImpl(ia.accessor, ctx, inputs);
 
             break :blk ctx.evalIndexAccess(lhs, rhs);
+        },
+        .func_call => |fc| blk: {
+            const Callee = EvalImpl(fc.callee, Ctx, Inputs);
+            const callee: Callee = try evalImpl(fc.callee, ctx, inputs);
+
+            const Args = EvalExprTupleImpl(fc.args, Ctx, Inputs);
+            const args: Args = args: {
+                var args: Args = undefined;
+                inline for (fc.args, 0..) |arg, i| {
+                    args[i] = try evalImpl(arg, ctx, inputs);
+                }
+                break :args args;
+            };
+
+            break :blk ctx.evalFuncCall(callee, args);
         },
         .un_op => |un| blk: {
             const Val = EvalImpl(un.val.*, Ctx, Inputs);
@@ -152,6 +200,14 @@ test eval {
             return lhs[rhs];
         }
 
+        pub fn EvalFuncCall(comptime Callee: type, comptime Args: type) type {
+            _ = Args;
+            return @typeInfo(util.ImplicitDeref(Callee)).Fn.return_type.?;
+        }
+        pub fn evalFuncCall(_: @This(), callee: anytype, args: anytype) EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
+            return @call(.auto, callee, args);
+        }
+
         pub fn EvalUnOp(comptime op: UnOp, comptime T: type) type {
             _ = op;
             return T;
@@ -193,6 +249,20 @@ test eval {
     try util.testing.expectEqual(8, eval("y + 2 * x", SimpleCtx{}, .{ .y = 2, .x = 3 }));
     try util.testing.expectEqual(3, eval("a.b", SimpleCtx{}, .{ .a = .{ .b = 3 } }));
 
+    const test_fns = struct {
+        // zig fmt: off
+        inline fn get15() comptime_int { return 15; }
+        inline fn addOne(comptime value: comptime_int) i32 { return value + 1; }
+        inline fn sub(a: i32, b: i32) u32 { return a - b; }
+        // zig fmt: on
+    };
+    try util.testing.expectEqual(15, eval("get15()", SimpleCtx{}, .{ .get15 = test_fns.get15 }));
+    try util.testing.expectEqual(16, eval("addOne(15)", SimpleCtx{}, .{ .addOne = test_fns.addOne }));
+    try util.testing.expectEqual(17, eval("sub(19, 2)", SimpleCtx{}, .{ .sub = test_fns.sub }));
+
+    try util.testing.expectEqual(30, eval("2 * get15()", SimpleCtx{}, .{ .get15 = test_fns.get15 }));
+    try util.testing.expectEqual(-45, eval("(3 * -get15())", SimpleCtx{}, .{ .get15 = test_fns.get15 }));
+
     const PowCtx = struct {
         pub const UnOp = enum {};
         pub const BinOp = enum { @"^" };
@@ -203,6 +273,7 @@ test eval {
         pub const EvalProperty = opaque {};
         pub const EvalIndexAccess = opaque {};
         pub const EvalUnOp = opaque {};
+        pub const EvalFuncCall = opaque {};
 
         pub fn EvalBinOp(comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type {
             _ = op;

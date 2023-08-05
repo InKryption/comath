@@ -161,6 +161,7 @@ test parseExpr {
 
 const NestType = enum(comptime_int) { none, paren, bracket };
 const ParseExprImplInnerUpdate = struct {
+    ends_with_comma: bool,
     tokenizer: Tokenizer,
     result: ExprNode,
 };
@@ -175,44 +176,55 @@ fn parseExprImpl(
     comptime {
         var result: ExprNode = .null;
         var tokenizer = tokenizer_init;
-        while (tokenizer.next(expr, UnOpEnum, BinOpEnum)) |tok| {
-            const res_copy = result;
-            switch (tok) {
-                inline //
-                .ident,
-                .integer,
-                => |val, tag| result = res_copy.concatExpr(@unionInit(ExprNode, @tagName(tag), val)),
-                .char => |val| result = res_copy.concatExpr(.{ .char = @enumFromInt(val) }),
-                .float => |val| result = res_copy.concatExpr(.{ .float = Number{ .src = val } }),
-                .field => |field| result = res_copy.concatFieldAccess(field),
-                .bin_op => |op| result = res_copy.concatBinOp(@field(BinOpEnum, op), relations),
-                .un_op => |op| result = res_copy.concatUnOp(@tagName(@field(UnOpEnum, op))),
+        var ends_with_comma = false;
+        while (tokenizer.next(expr, UnOpEnum, BinOpEnum)) |tok| switch (tok) {
+            inline //
+            .ident,
+            .integer,
+            => |val, tag| result = result.concatExpr(@unionInit(ExprNode, @tagName(tag), val)),
+            .char => |val| result = result.concatExpr(.{ .char = @enumFromInt(val) }),
+            .float => |val| result = result.concatExpr(.{ .float = Number{ .src = val } }),
+            .field => |field| result = result.concatFieldAccess(field),
+            .bin_op => |op| result = result.concatBinOp(@field(BinOpEnum, op), relations),
+            .un_op => |op| result = result.concatUnOp(@tagName(@field(UnOpEnum, op))),
 
-                .paren_open => {
+            .paren_open => {
+                var args: []const ExprNode = &.{};
+                while (true) {
                     const update = parseExprImpl(expr, .paren, tokenizer, UnOpEnum, BinOpEnum, relations);
                     tokenizer = update.tokenizer;
-                    result = res_copy.concatExpr(.{ .group = update.result.dedupe() });
-                },
-                .paren_close => {
-                    if (nest_type != .paren) @compileError("Unexpected closing parentheses");
-                    break;
-                },
+                    if (update.result != .null) {
+                        args = args ++ &[_]ExprNode{update.result.dedupe().*};
+                    }
+                    if (!update.ends_with_comma) break;
+                }
+                result = result.concatFunctionArgsOrJustGroup(util.dedupeSlice(ExprNode, args));
+            },
+            .paren_close => {
+                if (nest_type != .paren) @compileError("Unexpected closing parentheses");
+                break;
+            },
+            .comma => {
+                if (nest_type != .paren) @compileError("Unexpected comma");
+                ends_with_comma = true;
+                break;
+            },
 
-                .bracket_open => {
-                    const update = parseExprImpl(expr, .bracket, tokenizer, UnOpEnum, BinOpEnum, relations);
-                    tokenizer = update.tokenizer;
-                    result = .{ .index_access = &.{
-                        .accessed = res_copy,
-                        .accessor = update.result,
-                    } };
-                },
-                .bracket_close => {
-                    if (nest_type != .bracket) @compileError("Unexpected closing bracket");
-                    break;
-                },
-            }
-        }
+            .bracket_open => {
+                const update = parseExprImpl(expr, .bracket, tokenizer, UnOpEnum, BinOpEnum, relations);
+                tokenizer = update.tokenizer;
+                result = .{ .index_access = &.{
+                    .accessed = result,
+                    .accessor = update.result,
+                } };
+            },
+            .bracket_close => {
+                if (nest_type != .bracket) @compileError("Unexpected closing bracket");
+                break;
+            },
+        };
         return .{
+            .ends_with_comma = ends_with_comma,
             .tokenizer = tokenizer,
             .result = result,
         };
@@ -228,6 +240,7 @@ pub const ExprNode = union(enum) {
     group: *const ExprNode,
     field_access: FieldAccess,
     index_access: *const IndexAccess,
+    func_call: *const FuncCall,
     un_op: UnOp,
     bin_op: BinOp,
 
@@ -240,6 +253,7 @@ pub const ExprNode = union(enum) {
                 .op = util.dedupeSlice(u8, op),
                 .val = ExprNode.dedupe(.null),
             } },
+            .func_call => @compileError("TODO: handle"),
             .un_op => |un| un.concatOp(op).*,
             .bin_op => |bin| ExprNode{ .bin_op = .{
                 .lhs = bin.lhs,
@@ -278,6 +292,8 @@ pub const ExprNode = union(enum) {
                 .op = util.dedupeSlice(u8, @tagName(op)),
                 .rhs = ExprNode.dedupe(.null),
             } },
+
+            .func_call => @compileError("TODO: handle"),
 
             .un_op => |un| switch (un.val.*) {
                 .null => @compileError("Unexpected token '" ++ @tagName(op) ++ "'"),
@@ -334,6 +350,7 @@ pub const ExprNode = union(enum) {
                         .rhs = ExprNode.dedupe(.null),
                     } };
                 },
+                .func_call => @compileError("TODO: handle"),
                 .bin_op, .un_op => .{ .bin_op = .{
                     .lhs = bin.lhs,
                     .op = bin.op,
@@ -355,6 +372,11 @@ pub const ExprNode = union(enum) {
             .group,
             => @compileError(std.fmt.comptimePrint("Unexpected token '{}'", .{new.fmt()})),
 
+            .func_call => |fc| ExprNode.dedupe(.{ .func_call = &.{
+                .callee = fc.callee,
+                .args = fc.args ++ if (new.group.* == .null) &.{} else &[_]ExprNode{new.group.*},
+            } }).*,
+
             .bin_op => |bin| switch (bin.rhs.*) {
                 .null => .{ .bin_op = .{
                     .lhs = bin.lhs,
@@ -370,6 +392,7 @@ pub const ExprNode = union(enum) {
                 .float,
                 .group,
                 => @compileError(std.fmt.comptimePrint("Unexpected token '{}'", .{new.fmt()})),
+                .func_call => @compileError("TODO: handle"),
                 .bin_op,
                 .un_op,
                 => .{ .bin_op = .{
@@ -379,6 +402,32 @@ pub const ExprNode = union(enum) {
                 } },
             },
             .un_op => |un| un.insertExprAsInnerTarget(new),
+        };
+    }
+    inline fn concatFunctionArgsOrJustGroup(comptime base: ExprNode, comptime args: []const ExprNode) ExprNode {
+        return switch (base) {
+            .null => .{ .group = if (args.len != 1) @compileError("Group must be comprised of exactly 1 expression") else &args[0] },
+            .ident,
+            .field_access,
+            .integer,
+            .char,
+            .float,
+            .group,
+            .index_access,
+            .func_call,
+            => .{ .func_call = &.{
+                .callee = base,
+                .args = args,
+            } },
+            .bin_op => |bin| .{ .bin_op = .{
+                .lhs = bin.lhs,
+                .op = bin.op,
+                .rhs = bin.rhs.concatFunctionArgsOrJustGroup(args).dedupe(),
+            } },
+            .un_op => |un| .{ .un_op = .{
+                .op = un.op,
+                .val = un.val.concatFunctionArgsOrJustGroup(args).dedupe(),
+            } },
         };
     }
     inline fn concatFieldAccess(comptime base: ExprNode, comptime field: []const u8) ExprNode {
@@ -395,6 +444,7 @@ pub const ExprNode = union(enum) {
                 .accessed = base.dedupe(),
                 .accessor = util.dedupeSlice(u8, field),
             } },
+            .func_call => @compileError("TODO: handle"),
             .bin_op => |bin| .{ .bin_op = .{
                 .lhs = bin.lhs,
                 .op = bin.op,
@@ -424,6 +474,7 @@ pub const ExprNode = union(enum) {
                     .accessed = ia.accessed.dedupe(),
                     .accessor = ia.accessor.dedupe(),
                 } }),
+                .func_call => |fc| dedupeImpl(.{ .func_call = &fc.dedupe() }),
                 .bin_op => |bin| dedupeImpl(.{ .bin_op = .{
                     .lhs = bin.lhs.dedupe(),
                     .op = bin.op,
@@ -439,6 +490,13 @@ pub const ExprNode = union(enum) {
             return &expr;
         }
     }.dedupe;
+    inline fn dedupeExprSlice(comptime slice: []const ExprNode) *const [slice.len]ExprNode {
+        comptime {
+            var array = slice[0..].*;
+            for (&array) |*expr| expr.* = expr.dedupe().*;
+            return util.dedupeSlice(ExprNode, &array);
+        }
+    }
 
     const FieldAccess = struct {
         accessed: *const ExprNode,
@@ -459,6 +517,17 @@ pub const ExprNode = union(enum) {
             return .{
                 .accessed = ia.accessed.dedupe(),
                 .accessor = ia.accessor.dedupe(),
+            };
+        }
+    };
+    pub const FuncCall = struct {
+        callee: ExprNode,
+        args: []const ExprNode,
+
+        inline fn dedupe(comptime fc: FuncCall) FuncCall {
+            return .{
+                .callee = fc.callee.dedupe().*,
+                .args = dedupeExprSlice(fc.args),
             };
         }
     };
@@ -544,6 +613,18 @@ pub const ExprNode = union(enum) {
                 .ident => |ident| ident,
                 .field_access => |field| std.fmt.comptimePrint("{}.{s}", .{ field.accessed.fmt(), field.accessor }),
                 .index_access => |index| std.fmt.comptimePrint("{}[{}]", .{ index.accessed.fmt(), index.accessor.fmt() }),
+                .func_call => |fc| std.fmt.comptimePrint("{}", .{fc.callee}) ++ args: {
+                    var args: []const u8 = "";
+                    args = args ++ "(";
+                    if (fc.args.len != 0) {
+                        args = args ++ std.fmt.comptimePrint("{}", .{fc.args[0].fmt()});
+                    }
+                    for (fc.args[1..]) |arg| {
+                        args = args ++ std.fmt.comptimePrint(", {}", .{arg.fmt()});
+                    }
+                    args = args ++ ")";
+                    break :args args;
+                },
                 .integer => |int| std.fmt.comptimePrint("{d}", .{int}),
                 .char => |char| std.fmt.comptimePrint("'{u}'", .{@intFromEnum(char)}),
                 .float => |num| std.fmt.comptimePrint(num.src),
