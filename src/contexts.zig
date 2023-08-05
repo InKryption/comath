@@ -66,9 +66,10 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
             }
             return std.meta.FieldType(Lhs, field);
         }
-        pub inline fn evalProperty(ctx: @This(), lhs: anytype, comptime field: []const u8) EvalProperty(@TypeOf(lhs), field) {
+        pub inline fn evalProperty(ctx: Self, lhs: anytype, comptime field: []const u8) EvalProperty(@TypeOf(lhs), field) {
+            const Lhs = @TypeOf(lhs);
             if (@hasDecl(Ns, "EvalProperty")) {
-                if (ctx.EvalProperty(@TypeOf(lhs), field) != noreturn) {
+                if (Ns.EvalProperty(Lhs, field) != noreturn) {
                     return ctx.evalProperty(lhs, field);
                 }
             }
@@ -84,12 +85,33 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
             return std.meta.Elem(Lhs);
         }
         pub inline fn evalIndexAccess(ctx: Self, lhs: anytype, rhs: anytype) EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
+            const Lhs = @TypeOf(lhs);
+            const Rhs = @TypeOf(rhs);
             if (@hasDecl(Ns, "EvalIndexAccess")) {
-                if (Ns.EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) != noreturn) {
+                if (Ns.EvalIndexAccess(Lhs, Rhs) != noreturn) {
                     return ctx.evalIndexAccess(lhs, rhs);
                 }
             }
             return lhs[rhs];
+        }
+
+        pub fn EvalFuncCall(comptime Callee: type, comptime Args: type) type {
+            if (@hasDecl(Ns, "EvalFuncCall")) {
+                if (Ns.EvalFuncCall(Callee, Args) != noreturn) {
+                    return Ns.EvalFuncCall(Callee, Args);
+                }
+            }
+            return @typeInfo(util.ImplicitDeref(Callee)).Fn.return_type.?;
+        }
+        pub inline fn evalFuncCall(ctx: Self, callee: anytype, args: anytype) EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
+            const Callee = @TypeOf(callee);
+            const Args = @TypeOf(args);
+
+            if (@hasDecl(Ns, "EvalFuncCall")) {
+                if (Ns.EvalFuncCall(Callee, Args) != noreturn) {
+                    return ctx.evalFuncCall(callee, args);
+                }
+            }
         }
 
         pub fn EvalUnOp(comptime op: UnOp, comptime T: type) type {
