@@ -134,17 +134,34 @@ pub const indexOfNoneComptime = struct {
 }.indexOfNoneComptime;
 
 pub const dedupeSlice = struct {
-    inline fn dedupeSlice(comptime T: type, comptime slice: []const T) *const [slice.len]T {
-        comptime return dedupeSliceImpl(slice[0..].*);
+    inline fn dedupeSlice(
+        comptime T: type,
+        comptime slice: []const T,
+    ) *const [slice.len]T {
+        comptime return dedupeSliceImpl(T, slice[0..].*);
     }
-    fn dedupeSliceImpl(comptime array: anytype) *const [array.len]@typeInfo(@TypeOf(array)).Array.child {
-        comptime {
-            const Array = @TypeOf(array);
-            assert(Array == [array.len]@typeInfo(Array).Array.child);
-            return &array;
-        }
+    fn dedupeSliceImpl(
+        comptime T: type,
+        comptime array: anytype,
+    ) *const [array.len]T {
+        comptime return &array;
     }
 }.dedupeSlice;
+
+pub inline fn dedupeValue(comptime value: anytype) *const @TypeOf(value) {
+    return &value;
+}
+
+pub inline fn dedupeSlices(
+    comptime T: type,
+    comptime slices: []const []const T,
+) *const [slices.len][]const T {
+    comptime {
+        var deduped = slices[0..].*;
+        for (&deduped) |*slice| slice.* = dedupeSlice(T, slice.*);
+        return dedupeSlice([]const T, &deduped);
+    }
+}
 
 pub fn ImplicitDeref(comptime T: type) type {
     return switch (@typeInfo(T)) {

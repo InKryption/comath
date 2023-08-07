@@ -305,9 +305,10 @@ pub const ExprNode = union(enum) {
                 .char,
                 .float,
                 .group,
+                .func_call,
                 => .{ .bin_op = .{
                     .lhs = base.dedupe(),
-                    .op = op,
+                    .op = @tagName(op),
                     .rhs = ExprNode.dedupe(.null),
                 } },
 
@@ -354,7 +355,7 @@ pub const ExprNode = union(enum) {
                 .bin_op, .un_op => .{ .bin_op = .{
                     .lhs = bin.lhs,
                     .op = bin.op,
-                    .rhs = bin.rhs.concatOp(op).dedupe(),
+                    .rhs = bin.rhs.concatBinOp(op, precedence).dedupe(),
                 } },
             },
         };
