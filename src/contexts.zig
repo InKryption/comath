@@ -66,7 +66,7 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
             }
             return std.meta.FieldType(Lhs, field);
         }
-        pub inline fn evalProperty(ctx: Self, lhs: anytype, comptime field: []const u8) EvalProperty(@TypeOf(lhs), field) {
+        pub inline fn evalProperty(ctx: Self, lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field) {
             const Lhs = @TypeOf(lhs);
             if (@hasDecl(Ns, "EvalProperty")) {
                 if (Ns.EvalProperty(Lhs, field) != noreturn) {
@@ -84,7 +84,7 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
             }
             return std.meta.Elem(Lhs);
         }
-        pub inline fn evalIndexAccess(ctx: Self, lhs: anytype, rhs: anytype) EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
+        pub inline fn evalIndexAccess(ctx: Self, lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
             const Rhs = @TypeOf(rhs);
             if (@hasDecl(Ns, "EvalIndexAccess")) {
@@ -101,9 +101,14 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                     return Ns.EvalFuncCall(Callee, Args);
                 }
             }
-            return @typeInfo(util.ImplicitDeref(Callee)).Fn.return_type.?;
+            const Ret = @typeInfo(util.ImplicitDeref(Callee)).Fn.return_type orelse blk: {
+                const callee: Callee = undefined;
+                const args: Args = undefined;
+                break :blk @TypeOf(@call(.auto, callee, args));
+            };
+            return util.GetPayloadIfErrorUnion(Ret);
         }
-        pub inline fn evalFuncCall(ctx: Self, callee: anytype, args: anytype) EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
+        pub inline fn evalFuncCall(ctx: Self, callee: anytype, args: anytype) !EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
             const Callee = @TypeOf(callee);
             const Args = @TypeOf(args);
 
@@ -124,7 +129,7 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                 .@"-" => T,
             };
         }
-        pub inline fn evalUnOp(ctx: Self, comptime op: UnOp, val: anytype) EvalUnOp(op, @TypeOf(val)) {
+        pub inline fn evalUnOp(ctx: Self, comptime op: UnOp, val: anytype) !EvalUnOp(op, @TypeOf(val)) {
             if (@hasDecl(Ns, "EvalUnOp")) {
                 if (Ns.EvalUnOp(op, @TypeOf(val)) != noreturn) {
                     return ctx.sub_ctx.evalUnOp(op, val);
@@ -164,7 +169,7 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                 .@"@" => [rhs.len][lhs[0].len]@TypeOf(lhs[0][0]),
             };
         }
-        pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: BinOp, rhs: anytype) EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+        pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: BinOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
             const Rhs = @TypeOf(rhs);
             if (@hasDecl(Ns, "EvalBinOp")) {
@@ -271,24 +276,67 @@ pub fn FnMethodCtx(
         pub const BinOp = SubCtx.BinOp;
         pub const relations = SubCtx.relations;
 
-        pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {
-            return SubCtx.EvalProperty(Lhs, field);
+        pub fn EvalProperty(comptime T: type, comptime field: []const u8) type {
+            if (getOpMapping(T, "evalProperty", method_names, 2)) |name| {
+                const Method = util.ImplicitDeref(@TypeOf(@field(T, name)));
+                const method_info = @typeInfo(Method).Fn;
+                if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
+
+                const val: (method_info.params[0].type orelse T) = undefined;
+                const field_arg = if (method_info.params[1]) |FieldArg| castStringTo(FieldArg, field) else field;
+                return util.GetPayloadIfErrorUnion(@TypeOf(@field(T, name)(val, field_arg)));
+            }
+            return SubCtx.EvalProperty(T, field);
         }
-        pub inline fn evalProperty(ctx: Self, lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field) {
-            return ctx.sub_ctx.evalProperty(lhs, field);
+        pub inline fn evalProperty(ctx: Self, val: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(val), field) {
+            const T = @TypeOf(val);
+            if (getOpMapping(@TypeOf(val), "evalProperty", method_names, 2)) |name| {
+                const Method = util.ImplicitDeref(@TypeOf(@field(T, name)));
+                const method_info = @typeInfo(Method).Fn;
+
+                const field_arg = if (method_info.params[1]) |FieldArg| castStringTo(FieldArg, field) else field;
+                return @field(T, name)(val, field_arg);
+            }
+            return ctx.sub_ctx.evalProperty(val, field);
         }
 
         pub fn EvalIndexAccess(comptime Lhs: type, comptime Rhs: type) type {
+            if (getOpMapping(Lhs, "evalIndexAccess", method_names, 2)) |name| {
+                const Method = util.ImplicitDeref(@TypeOf(@field(Rhs, name)));
+                const method_info = @typeInfo(Method).Fn;
+                if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
+
+                const lhs: (method_info.params[0].type orelse Lhs) = undefined;
+                const rhs: (method_info.params[0].type orelse Rhs) = undefined;
+                return util.GetPayloadIfErrorUnion(@TypeOf(@field(Lhs, name)(lhs, rhs)));
+            }
             return SubCtx.EvalIndexAccess(Lhs, Rhs);
         }
         pub inline fn evalIndexAccess(ctx: Self, lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
+            const Lhs = @TypeOf(lhs);
+            if (getOpMapping(Lhs, "evalIndexAccess", method_names, 2)) |name| {
+                return @field(Lhs, name)(lhs, rhs);
+            }
             return ctx.sub_ctx.evalIndexAccess(lhs, rhs);
         }
 
         pub fn EvalFuncCall(comptime Callee: type, comptime Args: type) type {
+            if (getOpMapping(Callee, "evalFuncCall", method_names, 2)) |name| {
+                const Method = util.ImplicitDeref(@TypeOf(@field(Args, name)));
+                const method_info = @typeInfo(Method).Fn;
+                if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
+
+                const lhs: (method_info.params[0].type orelse Callee) = undefined;
+                const rhs: (method_info.params[0].type orelse Args) = undefined;
+                return util.GetPayloadIfErrorUnion(@TypeOf(@field(Callee, name)(lhs, rhs)));
+            }
             return SubCtx.EvalFuncCall(Callee, Args);
         }
         pub inline fn evalFuncCall(ctx: Self, callee: anytype, args: anytype) !EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
+            const Callee = @TypeOf(callee);
+            if (getOpMapping(Callee, "evalFuncCall", method_names, 2)) |name| {
+                return @field(Callee, name)(callee, args);
+            }
             return ctx.sub_ctx.evalFuncCall(callee, args);
         }
 
@@ -296,10 +344,10 @@ pub fn FnMethodCtx(
             if (getOpMapping(T, @tagName(op), method_names, 1)) |name| {
                 const Method = util.ImplicitDeref(@TypeOf(@field(T, name)));
                 const method_info = @typeInfo(Method).Fn;
-                if (method_info.return_type) |Ret| return Ret;
+                if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
 
-                const val: (method_info.params[0].type orelse *const T) = undefined;
-                return @TypeOf(@field(T, name)(val));
+                const val: (method_info.params[0].type orelse T) = undefined;
+                return util.GetPayloadIfErrorUnion(@TypeOf(@field(T, name)(val)));
             }
             return SubCtx.EvalUnOp(op, T);
         }
@@ -315,11 +363,11 @@ pub fn FnMethodCtx(
             if (comptime getOpMapping(Lhs, @tagName(op), method_names, 2)) |name| {
                 const Method = util.ImplicitDeref(@TypeOf(@field(Lhs, name)));
                 const method_info = @typeInfo(Method).Fn;
-                if (method_info.return_type) |Ret| return Ret;
+                if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
 
-                const lhs: (method_info.params[0].type orelse *const Lhs) = undefined;
-                const rhs: (method_info.params[1].type orelse *const Rhs) = undefined;
-                return @TypeOf(@field(Lhs, name)(lhs, rhs));
+                const lhs: (method_info.params[0].type orelse Lhs) = undefined;
+                const rhs: (method_info.params[1].type orelse Rhs) = undefined;
+                return util.GetPayloadIfErrorUnion(@TypeOf(@field(Lhs, name)(lhs, rhs)));
             }
             return SubCtx.EvalBinOp(Lhs, op, Rhs);
         }
@@ -331,6 +379,41 @@ pub fn FnMethodCtx(
             return ctx.sub_ctx.evalBinOp(lhs, op, rhs);
         }
     };
+}
+
+inline fn castStringTo(comptime T: type, comptime str: []const u8) T {
+    comptime switch (@typeInfo(T)) {
+        .Enum => return @field(T, str),
+        .Array => return str[0..].*,
+        .Pointer => |pointer| ptr: {
+            var sentinel: ?u8 = null;
+            switch (pointer.size) {
+                .Slice, .Many => {
+                    if (pointer.child != u8) break :ptr;
+                    if (pointer.sentinel) |maybe_ptr| blk: {
+                        const ptr = maybe_ptr orelse break :blk;
+                        sentinel = @as(*align(1) const pointer.child, @ptrCast(ptr)).*;
+                    }
+                },
+                .One => switch (@typeInfo(pointer.child)) {
+                    .Enum => return &@field(pointer.child, str),
+                    .Array => |array| {
+                        if (array.child != u8) break :ptr;
+                        if (array.sentinel) |maybe_ptr| blk: {
+                            const ptr = maybe_ptr orelse break :blk;
+                            sentinel = @as(*align(1) const pointer.child, @ptrCast(ptr)).*;
+                        }
+                    },
+                },
+                else => break :ptr,
+            }
+            return if (sentinel) |s|
+                str[0..] ++ &[_:s]u8{}
+            else
+                str[0..];
+        },
+    };
+    @compileError("Can't cast to type " ++ @typeName(T));
 }
 
 inline fn getOpMapping(

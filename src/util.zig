@@ -172,3 +172,10 @@ pub fn ImplicitDeref(comptime T: type) type {
         else => T,
     };
 }
+
+pub fn GetPayloadIfErrorUnion(comptime T: type) type {
+    return switch (@typeInfo(T)) {
+        .ErrorUnion => |errun| errun.payload,
+        else => T,
+    };
+}
