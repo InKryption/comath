@@ -287,13 +287,12 @@ pub const ExprNode = union(enum) {
             .char,
             .float,
             .group,
+            .func_call,
             => .{ .bin_op = .{
                 .lhs = base.dedupe(),
                 .op = util.dedupeSlice(u8, @tagName(op)),
                 .rhs = ExprNode.dedupe(.null),
             } },
-
-            .func_call => @compileError("TODO: handle"),
 
             .un_op => |un| switch (un.val.*) {
                 .null => @compileError("Unexpected token '" ++ @tagName(op) ++ "'"),

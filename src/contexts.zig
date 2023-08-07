@@ -321,21 +321,24 @@ pub fn FnMethodCtx(
         }
 
         pub fn EvalFuncCall(comptime Callee: type, comptime Args: type) type {
-            if (getOpMapping(Callee, "evalFuncCall", method_names, 2)) |name| {
-                const Method = util.ImplicitDeref(@TypeOf(@field(Args, name)));
+            const args_info = @typeInfo(Args).Struct;
+            if (getOpMapping(Callee, "evalFuncCall", method_names, 1 + args_info.fields.len)) |name| {
+                const Method = util.ImplicitDeref(@TypeOf(@field(Callee, name)));
                 const method_info = @typeInfo(Method).Fn;
                 if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
 
                 const lhs: (method_info.params[0].type orelse Callee) = undefined;
                 const rhs: (method_info.params[0].type orelse Args) = undefined;
-                return util.GetPayloadIfErrorUnion(@TypeOf(@field(Callee, name)(lhs, rhs)));
+                return util.GetPayloadIfErrorUnion(@TypeOf(@call(.auto, @field(Callee, name), .{lhs} ++ rhs)));
             }
             return SubCtx.EvalFuncCall(Callee, Args);
         }
         pub inline fn evalFuncCall(ctx: Self, callee: anytype, args: anytype) !EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
             const Callee = @TypeOf(callee);
-            if (getOpMapping(Callee, "evalFuncCall", method_names, 2)) |name| {
-                return @field(Callee, name)(callee, args);
+            const Args = @TypeOf(args);
+            const args_info = @typeInfo(Args).Struct;
+            if (getOpMapping(Callee, "evalFuncCall", method_names, 1 + args_info.fields.len)) |name| {
+                return @call(.auto, @field(Callee, name), .{callee} ++ args);
             }
             return ctx.sub_ctx.evalFuncCall(callee, args);
         }
@@ -509,15 +512,28 @@ test fnMethodCtx {
         pub inline fn neg(self: @This()) @This() {
             return @enumFromInt(-@intFromEnum(self));
         }
+        pub inline fn mul(self: @This(), other: anytype) @This() {
+            return @enumFromInt(@intFromEnum(self) * switch (@TypeOf(other)) {
+                @This() => @intFromEnum(other),
+                comptime_int => other,
+                else => |Other| @compileError("Unexpected type " ++ @typeName(Other)),
+            });
+        }
     };
 
     const fm_ctx = fnMethodCtx(simpleCtx({}), .{
         .@"+" = "add",
         .@"-" = &.{ "sub", "neg" },
+        .@"*" = "mul",
+        .evalFuncCall = "mul",
     });
     try util.testing.expectEqual(@as(CustomNum, @enumFromInt(2)), eval.eval("a + -b - c", fm_ctx, .{
         .a = @as(CustomNum, @enumFromInt(22)),
         .b = @as(CustomNum, @enumFromInt(9)),
         .c = @as(CustomNum, @enumFromInt(11)),
+    }));
+    try util.testing.expectEqual(@as(CustomNum, @enumFromInt(77)), eval.eval("a(b) * 1", fm_ctx, .{
+        .a = @as(CustomNum, @enumFromInt(11)),
+        .b = @as(CustomNum, @enumFromInt(7)),
     }));
 }
