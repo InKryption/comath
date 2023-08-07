@@ -6,7 +6,7 @@ pub fn build(b: *Build) void {
         .source_file = Build.FileSource.relative("src/util.zig"),
     });
     const eval = b.addModule("eval", .{
-        .source_file = Build.FileSource.relative("src/main.zig"),
+        .source_file = Build.FileSource.relative("src/eval.zig"),
         .dependencies = &.{
             .{ .name = "util", .module = util_mod },
         },
@@ -24,7 +24,7 @@ pub fn build(b: *Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const main_tests = b.addTest(.{
-        .root_source_file = Build.FileSource.relative("src/main.zig"),
+        .root_source_file = Build.FileSource.relative("src/eval.zig"),
         .target = target,
         .optimize = optimize,
     });
