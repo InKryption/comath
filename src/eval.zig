@@ -5,6 +5,7 @@ const util = @import("util");
 const Tokenizer = @import("Tokenizer.zig");
 const parse = @import("parse.zig");
 
+pub const contexts = @import("contexts.zig");
 pub const Char = parse.Char;
 pub const Number = parse.Number;
 pub const operator = @import("operator.zig");
@@ -12,6 +13,7 @@ pub const operator = @import("operator.zig");
 comptime {
     _ = Tokenizer;
     _ = parse;
+    _ = contexts;
 }
 
 /// Evaluates `expr` as an expression, wherein the operations are defined

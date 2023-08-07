@@ -14,8 +14,26 @@ pub const testing = struct {
     }
 };
 
-inline fn eqlComptime(comptime T: type, comptime a: []const T, comptime b: []const T) bool {
+pub inline fn eqlComptime(comptime T: type, comptime a: []const T, comptime b: []const T) bool {
     comptime return @reduce(.And, vec(a[0..].*) == vec(b[0..].*));
+}
+pub inline fn indexOfDiffComptime(comptime T: type, comptime a: []const T, comptime b: []const T) ?comptime_int {
+    const shortest = @min(a.len, b.len);
+    const eqls_vec = vec(T, a[0..shortest].*) != vec(T, b[0..shortest].*);
+    return std.simd.firstTrue(eqls_vec) orelse
+        if (a.len == b.len) null else shortest;
+}
+
+pub inline fn orderComptime(comptime T: type, comptime a: []const T, comptime b: []const T) std.math.Order {
+    comptime {
+        const diff = indexOfDiffComptime(T, a, b) orelse return .eq;
+        if (a.len != b.len) switch (diff) {
+            a.len => return .lt,
+            b.len => return .gt,
+            else => {},
+        };
+        return std.math.order(a[diff], b[diff]);
+    }
 }
 
 pub inline fn vec(comptime T: type, init: anytype) @Vector(init.len, T) {

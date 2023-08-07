@@ -1,6 +1,49 @@
 const std = @import("std");
 const util = @import("util");
-const eval = @import("eval");
+const eval = @import("eval.zig");
+const operator = eval.operator;
+
+const SimpleUnOp = enum {
+    @"-",
+};
+const SimpleBinOp = enum {
+    @"+",
+    @"+|",
+    @"+%",
+
+    @"-",
+    @"-|",
+    @"-%",
+
+    @"*",
+    @"*|",
+    @"*%",
+
+    @"/",
+    @"%",
+
+    @"^",
+    @"@",
+};
+const simple_relations = .{
+    .@"+" = .{ .prec = 10, .assoc = .left },
+    .@"+|" = .{ .prec = 10, .assoc = .left },
+    .@"+%" = .{ .prec = 10, .assoc = .left },
+
+    .@"-" = .{ .prec = 10, .assoc = .left },
+    .@"-|" = .{ .prec = 10, .assoc = .left },
+    .@"-%" = .{ .prec = 10, .assoc = .left },
+
+    .@"*" = .{ .prec = 20, .assoc = .left },
+    .@"*|" = .{ .prec = 20, .assoc = .left },
+    .@"*%" = .{ .prec = 20, .assoc = .left },
+
+    .@"/" = .{ .prec = 20, .assoc = .left },
+    .@"%" = .{ .prec = 20, .assoc = .left },
+
+    .@"^" = .{ .prec = 30, .assoc = .right },
+    .@"@" = .{ .prec = 0, .assoc = .left },
+};
 
 pub inline fn simpleCtx(sub_ctx: anytype) SimpleCtx(@TypeOf(sub_ctx)) {
     return .{ .sub_ctx = sub_ctx };
@@ -16,46 +59,18 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
         };
         const Ns = if (significant_ctx) util.ImplicitDeref(SubCtx) else struct {};
 
-        pub const UnOp = enum {
-            @"-",
-        };
-        pub const BinOp = enum {
-            @"+",
-            @"+|",
-            @"+%",
-
-            @"-",
-            @"-|",
-            @"-%",
-
-            @"*",
-            @"*|",
-            @"*%",
-
-            @"/",
-            @"%",
-
-            @"^",
-            @"@",
-        };
-        pub const relations: eval.operator.RelationMap(BinOp) = .{
-            .@"+" = .{ .prec = 1, .assoc = .left },
-            .@"+|" = .{ .prec = 1, .assoc = .left },
-            .@"+%" = .{ .prec = 1, .assoc = .left },
-
-            .@"-" = .{ .prec = 1, .assoc = .left },
-            .@"-|" = .{ .prec = 1, .assoc = .left },
-            .@"-%" = .{ .prec = 1, .assoc = .left },
-
-            .@"*" = .{ .prec = 2, .assoc = .left },
-            .@"*|" = .{ .prec = 2, .assoc = .left },
-            .@"*%" = .{ .prec = 2, .assoc = .left },
-
-            .@"/" = .{ .prec = 2, .assoc = .left },
-            .@"%" = .{ .prec = 2, .assoc = .left },
-
-            .@"^" = .{ .prec = 3, .assoc = .right },
-            .@"@" = .{ .prec = 0, .assoc = .left },
+        pub const UnOp = if (!@hasDecl(Ns, "UnOp")) SimpleUnOp else operator.OpEnumUnion(SimpleUnOp, Ns.UnOp);
+        pub const BinOp = if (!@hasDecl(Ns, "BinOp")) SimpleBinOp else operator.OpEnumUnion(SimpleBinOp, Ns.BinOp);
+        pub const relations: operator.RelationMap(BinOp) = if (!@hasDecl(Ns, "relations"))
+            simple_relations // if this issues an error about missing fields, you need to specify the relations of your custom operators in your SubCtx
+        else blk: {
+            var relations_map: operator.RelationMap(BinOp) = undefined;
+            for (@typeInfo(@TypeOf(relations_map)).Struct.fields) |field| {
+                const overriden = @hasField(Ns.BinOp, field.name) and @hasField(@TypeOf(Ns.relations), field.name);
+                const source = if (overriden) Ns.relations else simple_relations;
+                @field(relations_map, field.name) = @field(source, field.name);
+            }
+            break :blk relations_map;
         };
 
         pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {
@@ -121,8 +136,9 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
 
         pub fn EvalUnOp(comptime op: UnOp, comptime T: type) type {
             if (@hasDecl(Ns, "EvalUnOp")) {
-                if (Ns.EvalUnOp(op, T) != noreturn) {
-                    return Ns.EvalUnOp(op, T);
+                const op_tag = @field(Ns.UnOp, @tagName(op));
+                if (Ns.EvalUnOp(op_tag, T) != noreturn) {
+                    return Ns.EvalUnOp(op_tag, T);
                 }
             }
             return switch (op) {
@@ -131,8 +147,9 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
         }
         pub inline fn evalUnOp(ctx: Self, comptime op: UnOp, val: anytype) !EvalUnOp(op, @TypeOf(val)) {
             if (@hasDecl(Ns, "EvalUnOp")) {
-                if (Ns.EvalUnOp(op, @TypeOf(val)) != noreturn) {
-                    return ctx.sub_ctx.evalUnOp(op, val);
+                const op_tag = @field(Ns.UnOp, @tagName(op));
+                if (Ns.EvalUnOp(op_tag, @TypeOf(val)) != noreturn) {
+                    return ctx.sub_ctx.evalUnOp(op_tag, val);
                 }
             }
             return switch (op) {
@@ -142,8 +159,9 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
 
         pub fn EvalBinOp(comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type {
             if (@hasDecl(Ns, "EvalBinOp")) {
-                if (Ns.EvalBinOp(Lhs, op, Rhs) != noreturn) {
-                    return Ns.EvalBinOp(Lhs, op, Rhs);
+                const op_tag = @field(Ns.BinOp, @tagName(op));
+                if (Ns.EvalBinOp(Lhs, op_tag, Rhs) != noreturn) {
+                    return Ns.EvalBinOp(Lhs, op_tag, Rhs);
                 }
             }
 
@@ -173,8 +191,9 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
             const Lhs = @TypeOf(lhs);
             const Rhs = @TypeOf(rhs);
             if (@hasDecl(Ns, "EvalBinOp")) {
-                if (Ns.EvalBinOp(Lhs, op, Rhs) != noreturn) {
-                    return ctx.sub_ctx.evalBinOp(lhs, op, rhs);
+                const op_tag = @field(Ns.BinOp, @tagName(op));
+                if (Ns.EvalBinOp(Lhs, op_tag, Rhs) != noreturn) {
+                    return ctx.sub_ctx.evalBinOp(lhs, op_tag, rhs);
                 }
             }
             return switch (op) {
@@ -247,6 +266,39 @@ test simpleCtx {
         .b = [2][3]u16{ .{ 1, 2, 4 }, .{ 2, 3, 6 } },
         .c = [2][2]u16{ .{ 8, 2 }, .{ 3, 6 } },
     }));
+
+    const op_override_ctx = simpleCtx(struct {
+        pub const UnOp = enum { @"++" };
+        pub const BinOp = enum { @"^", @"$" };
+        pub const relations = .{
+            .@"$" = .{ .prec = 2, .assoc = .right },
+        };
+        pub fn EvalUnOp(comptime op: UnOp, comptime T: type) type {
+            return switch (op) {
+                .@"++" => T,
+            };
+        }
+        pub fn evalUnOp(_: @This(), comptime op: UnOp, val: anytype) EvalUnOp(op, @TypeOf(val)) {
+            return switch (op) {
+                .@"++" => val + 1,
+            };
+        }
+        pub fn EvalBinOp(comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type {
+            return switch (op) {
+                .@"^", .@"$" => @TypeOf(
+                    @as(Lhs, undefined),
+                    @as(Rhs, undefined),
+                ),
+            };
+        }
+        pub fn evalBinOp(_: @This(), lhs: anytype, comptime op: BinOp, rhs: anytype) EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+            return switch (op) {
+                .@"^" => lhs ^ rhs,
+                .@"$" => std.math.log(@TypeOf(lhs, rhs), lhs, rhs),
+            };
+        }
+    }{});
+    try util.testing.expectEqual(2, eval.eval("(++2 ^ 5) $ 36", op_override_ctx, .{}));
 }
 
 pub inline fn fnMethodCtx(
