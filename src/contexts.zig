@@ -379,9 +379,15 @@ fn DedupedMethodNames(comptime method_names: anytype) type {
     @setEvalBranchQuota(1000 + info.fields.len * 10);
     var fields: [info.fields.len]std.builtin.Type.StructField = undefined;
     for (&fields, info.fields) |*new, old| {
-        const T = switch (@typeInfo(@typeInfo(old.type).Pointer.child)) {
-            .Int => []const u8,
-            .Pointer, .Struct => []const []const u8,
+        const T = switch (@typeInfo(old.type)) {
+            .Pointer => |pointer| switch (@typeInfo(pointer.child)) {
+                .Int, .ComptimeInt => []const u8,
+                .Array => |array| switch (@typeInfo(array.child)) {
+                    .Int, .ComptimeInt => []const u8,
+                    else => []const []const u8,
+                },
+                else => []const []const u8,
+            },
             else => @compileError("Unexpected type " ++ @typeName(old.type)),
         };
         const old_value: T = @as(*align(1) const old.type, @ptrCast(old.default_value)).*;
@@ -423,7 +429,7 @@ test fnMethodCtx {
     };
 
     const fm_ctx = fnMethodCtx(simpleCtx({}), .{
-        .@"+" = &.{"add"},
+        .@"+" = "add",
         .@"-" = &.{ "sub", "neg" },
     });
     try util.testing.expectEqual(@as(CustomNum, @enumFromInt(2)), eval.eval("a + -b - c", fm_ctx, .{
