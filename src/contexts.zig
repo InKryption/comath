@@ -132,6 +132,7 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                     return ctx.sub_ctx.evalFuncCall(callee, args);
                 }
             }
+            return @call(.auto, callee, args);
         }
 
         pub fn EvalUnOp(comptime op: UnOp, comptime T: type) type {
@@ -555,6 +556,10 @@ test fnMethodCtx {
     const CustomNum = enum(i32) {
         _,
 
+        pub inline fn from(value: anytype) @This() {
+            return @enumFromInt(value);
+        }
+
         pub inline fn add(self: @This(), other: @This()) @This() {
             return @enumFromInt(@intFromEnum(self) + @intFromEnum(other));
         }
@@ -579,13 +584,16 @@ test fnMethodCtx {
         .@"*" = "mul",
         .evalFuncCall = "mul",
     });
-    try util.testing.expectEqual(@as(CustomNum, @enumFromInt(2)), eval.eval("a + -b - c", fm_ctx, .{
+    try util.testing.expectEqual(CustomNum.from(2), eval.eval("a + -b - c", fm_ctx, .{
         .a = @as(CustomNum, @enumFromInt(22)),
         .b = @as(CustomNum, @enumFromInt(9)),
         .c = @as(CustomNum, @enumFromInt(11)),
     }));
-    try util.testing.expectEqual(@as(CustomNum, @enumFromInt(77)), eval.eval("a(b) * 1", fm_ctx, .{
+    try util.testing.expectEqual(CustomNum.from(77), eval.eval("a(b) * 1", fm_ctx, .{
         .a = @as(CustomNum, @enumFromInt(11)),
         .b = @as(CustomNum, @enumFromInt(7)),
+    }));
+    try util.testing.expectEqual(CustomNum.from(62), eval.eval("num(31)(2)", fm_ctx, .{
+        .num = CustomNum.from,
     }));
 }

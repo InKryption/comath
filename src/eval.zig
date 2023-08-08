@@ -93,11 +93,16 @@ fn EvalExprTupleImpl(
     var fields: [list.len]std.builtin.Type.StructField = undefined;
     for (&fields, list, 0..) |*field, arg, i| {
         const T = EvalImpl(arg, Ctx, Inputs);
+        const comptime_only = util.typeIsComptimeOnly(T) orelse @compileError("Cannot have an argument of type " ++ @typeName(T));
+
         field.* = .{
             .name = std.fmt.comptimePrint("{d}", .{i}),
             .type = T,
-            .default_value = null,
-            .is_comptime = false,
+            .default_value = if (!comptime_only) null else blk: {
+                const val: T = evalImpl(arg, @as(Ctx, undefined), @as(Inputs, undefined)) catch |err| @compileError(@errorName(err));
+                break :blk &val;
+            },
+            .is_comptime = comptime_only,
             .alignment = 0,
         };
         if (@sizeOf(T) == 0) {
@@ -150,11 +155,21 @@ inline fn evalImpl(
 
             const Args = EvalExprTupleImpl(fc.args, Ctx, Inputs);
             const args: Args = args: {
-                var args: Args = undefined;
-                inline for (fc.args, 0..) |arg, i| {
-                    args[i] = try evalImpl(arg, ctx, inputs);
+                if (util.typeIsComptimeOnly(Args).?) {
+                    var args: Args = undefined;
+                    inline for (fc.args, 0..) |arg, i| {
+                        if (@typeInfo(Args).Struct.fields[i].is_comptime) continue;
+                        args[i] = try evalImpl(arg, ctx, inputs);
+                    }
+                    break :args args;
+                } else comptime {
+                    var args: Args = undefined;
+                    inline for (fc.args, 0..) |arg, i| {
+                        if (@typeInfo(Args).Struct.fields[i].is_comptime) continue;
+                        args[i] = try evalImpl(arg, ctx, inputs);
+                    }
+                    break :args args;
                 }
-                break :args args;
             };
 
             break :blk ctx.evalFuncCall(callee, args);
