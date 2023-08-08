@@ -6,9 +6,9 @@ const Tokenizer = @import("Tokenizer.zig");
 const parse = @import("parse.zig");
 
 pub const contexts = @import("contexts.zig");
+pub const operator = @import("operator.zig");
 pub const Char = parse.Char;
 pub const Number = parse.Number;
-pub const operator = @import("operator.zig");
 
 comptime {
     _ = Tokenizer;
@@ -19,8 +19,34 @@ comptime {
 /// Evaluates `expr` as an expression, wherein the operations are defined
 /// by `ctx`, and the values of variables may be set via `inputs`.
 pub inline fn eval(
+    /// Source code representing an expression generally comparable in structure to
+    /// mathematical notation in most C-like programming languages.
+    /// The most general grammar of the expression is as follows:
+    /// ```
+    /// Expr
+    ///    <- Identifier
+    ///     / INT_LITERAL
+    ///     / FLOAT_LITERAL
+    ///     / CHAR_LITERAL
+    ///     / GROUP
+    ///     / FIELD_ACCESS
+    ///     / INDEX_ACCESS
+    ///     / FUNC_CALL
+    ///     / UN_OP
+    ///     / BIN_OP
+    ///
+    /// GROUP <- LPAREN Expr RPAREN
+    /// FIELD_ACCESS <- Expr PERIOD Identifier
+    /// INDEX_ACCESS <- Expr LBRACKET Expr RBRACKET
+    /// FUNC_CALL <- Expr LPAREN (Expr COMMA)* RPAREN
+    /// UN_OP <- OPERATOR Expr
+    /// BIN_OP <- Expr OPERATOR Expr
+    ///
+    /// Identifier <- [A-Za-z_][A-Za-z_0-9]*
+    /// ```
     comptime expr: []const u8,
     ctx: anytype,
+    /// Should be a struct literal which assigns values to variable names appearing in the `expr`
     inputs: anytype,
 ) !Eval(expr, @TypeOf(ctx), @TypeOf(inputs)) {
     const Ctx = @TypeOf(ctx);
@@ -61,7 +87,7 @@ fn EvalImpl(
         .float => Number,
         .group => |group| EvalImpl(group.*, Ctx, Inputs),
         .field_access => |fa| blk: {
-            const Lhs = EvalImpl(fa.accessed.*, Ctx, Inputs);
+            const Lhs = EvalImpl(fa.accessed, Ctx, Inputs);
             break :blk EvalProperty(Lhs, util.dedupeSlice(u8, fa.accessor));
         },
         .index_access => |ia| blk: {
@@ -75,12 +101,12 @@ fn EvalImpl(
             break :blk EvalFuncCall(Callee, Args);
         },
         .un_op => |un| blk: {
-            const Val = EvalImpl(un.val.*, Ctx, Inputs);
+            const Val = EvalImpl(un.val, Ctx, Inputs);
             break :blk EvalUnOp(@field(UnOp, un.op), Val);
         },
         .bin_op => |bin| blk: {
-            const Lhs = EvalImpl(bin.lhs.*, Ctx, Inputs);
-            const Rhs = EvalImpl(bin.rhs.*, Ctx, Inputs);
+            const Lhs = EvalImpl(bin.lhs, Ctx, Inputs);
+            const Rhs = EvalImpl(bin.rhs, Ctx, Inputs);
             break :blk EvalBinOp(Lhs, @field(BinOp, bin.op), Rhs);
         },
     };
@@ -136,8 +162,8 @@ inline fn evalImpl(
         .float => |num| num,
         .group => |group| evalImpl(group.*, ctx, inputs),
         .field_access => |fa| blk: {
-            const Lhs = EvalImpl(fa.accessed.*, Ctx, Inputs);
-            const lhs: Lhs = try evalImpl(fa.accessed.*, ctx, inputs);
+            const Lhs = EvalImpl(fa.accessed, Ctx, Inputs);
+            const lhs: Lhs = try evalImpl(fa.accessed, ctx, inputs);
             break :blk ctx.evalProperty(lhs, util.dedupeSlice(u8, fa.accessor));
         },
         .index_access => |ia| blk: {
@@ -175,16 +201,16 @@ inline fn evalImpl(
             break :blk ctx.evalFuncCall(callee, args);
         },
         .un_op => |un| blk: {
-            const Val = EvalImpl(un.val.*, Ctx, Inputs);
-            const val: Val = try evalImpl(un.val.*, ctx, inputs);
+            const Val = EvalImpl(un.val, Ctx, Inputs);
+            const val: Val = try evalImpl(un.val, ctx, inputs);
             break :blk ctx.evalUnOp(@field(UnOp, un.op), val);
         },
         .bin_op => |bin| blk: {
-            const Lhs = EvalImpl(bin.lhs.*, Ctx, Inputs);
-            const lhs: Lhs = try evalImpl(bin.lhs.*, ctx, inputs);
+            const Lhs = EvalImpl(bin.lhs, Ctx, Inputs);
+            const lhs: Lhs = try evalImpl(bin.lhs, ctx, inputs);
 
-            const Rhs = EvalImpl(bin.rhs.*, Ctx, Inputs);
-            const rhs: Rhs = try evalImpl(bin.rhs.*, ctx, inputs);
+            const Rhs = EvalImpl(bin.rhs, Ctx, Inputs);
+            const rhs: Rhs = try evalImpl(bin.rhs, ctx, inputs);
 
             break :blk ctx.evalBinOp(lhs, @field(BinOp, bin.op), rhs);
         },

@@ -1,6 +1,8 @@
 const std = @import("std");
 const util = @import("util");
 
+pub const symbols = @import("Tokenizer.zig").operator_characters;
+
 pub const Associativity = enum(comptime_int) {
     none,
     left,

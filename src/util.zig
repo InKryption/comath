@@ -15,7 +15,7 @@ pub const testing = struct {
 };
 
 pub inline fn eqlComptime(comptime T: type, comptime a: []const T, comptime b: []const T) bool {
-    comptime return @reduce(.And, vec(a[0..].*) == vec(b[0..].*));
+    comptime return @reduce(.And, vec(T, a[0..].*) == vec(T, b[0..].*));
 }
 pub inline fn indexOfDiffComptime(comptime T: type, comptime a: []const T, comptime b: []const T) ?comptime_int {
     const shortest = @min(a.len, b.len);
