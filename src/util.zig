@@ -197,3 +197,42 @@ pub fn GetPayloadIfErrorUnion(comptime T: type) type {
         else => T,
     };
 }
+
+pub inline fn typeIsComptimeOnly(comptime T: type) ?bool {
+    comptime return switch (@typeInfo(T)) {
+        .Type => true,
+        .Void => false,
+        .Bool => false,
+        .NoReturn => null,
+        .Int => false,
+        .Float => false,
+        .Pointer => |pointer| if (typeIsComptimeOnly(pointer.child)) |is_comptime_only| is_comptime_only and switch (pointer.size) {
+            .One => @typeInfo(pointer.child) != .Opaque or (pointer.is_const and @typeInfo(pointer.child) != .Fn),
+            else => true,
+        } else null,
+        .Array => |array| array.len != 0 and typeIsComptimeOnly(array.child),
+        .Struct => |structure| for (structure.fields) |field| {
+            if (field.is_comptime) continue;
+            if (!(typeIsComptimeOnly(field.type) orelse return null)) continue;
+            break true;
+        } else false,
+        .ComptimeFloat => true,
+        .ComptimeInt => true,
+        .Undefined => null,
+        .Null => null,
+        .Optional => |optional| typeIsComptimeOnly(optional.child),
+        .ErrorUnion => |optional| typeIsComptimeOnly(optional.payload),
+        .ErrorSet => false,
+        .Enum => |enumeration| typeIsComptimeOnly(enumeration.tag_type),
+        .Union => |@"union"| typeIsComptimeOnly(@"union".tag_type orelse enum {}) and for (@"union".fields) |field| {
+            if (!typeIsComptimeOnly(field.type)) continue;
+            break true;
+        } else false,
+        .Fn => true,
+        .Opaque => null,
+        .Frame => false,
+        .AnyFrame => false,
+        .Vector => |vector| typeIsComptimeOnly(vector.child),
+        .EnumLiteral => true,
+    };
+}
