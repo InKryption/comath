@@ -338,7 +338,7 @@ pub fn FnMethodCtx(
                 if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
 
                 const val: (method_info.params[0].type orelse T) = undefined;
-                const field_arg = if (method_info.params[1]) |FieldArg| castStringTo(FieldArg, field) else field;
+                const field_arg = if (method_info.params[1].type) |FieldArg| castStringTo(FieldArg, field) else field;
                 return util.GetPayloadIfErrorUnion(@TypeOf(@field(T, name)(val, field_arg)));
             }
             return SubCtx.EvalProperty(T, field);
@@ -349,7 +349,7 @@ pub fn FnMethodCtx(
                 const Method = util.ImplicitDeref(@TypeOf(@field(T, name)));
                 const method_info = @typeInfo(Method).Fn;
 
-                const field_arg = if (method_info.params[1]) |FieldArg| castStringTo(FieldArg, field) else field;
+                const field_arg = if (method_info.params[1].type) |FieldArg| castStringTo(FieldArg, field) else field;
                 return @field(T, name)(val, field_arg);
             }
             return ctx.sub_ctx.evalProperty(val, field);
@@ -470,6 +470,7 @@ inline fn castStringTo(comptime T: type, comptime str: []const u8) T {
             else
                 str[0..];
         },
+        else => {},
     };
     @compileError("Can't cast to type " ++ @typeName(T));
 }
