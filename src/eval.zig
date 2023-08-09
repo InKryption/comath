@@ -331,13 +331,12 @@ test eval {
             return switch (@typeInfo(@TypeOf(rhs)).Struct.fields.len) {
                 0 => lhs,
                 1 => lhs[rhs[0]],
-                else => |n| blk: {
-                    var result: [n]std.meta.Elem(@TypeOf(lhs)) = undefined;
-                    inline for (rhs, 0..) |access, i| {
-                        result[i] = lhs[access];
-                    }
-                    break :blk result;
-                },
+                else => @shuffle(
+                    std.meta.Elem(@TypeOf(lhs)),
+                    util.implicitDeref(lhs[0..]),
+                    undefined,
+                    @as([rhs.len]comptime_int, rhs),
+                ),
             };
         }
 

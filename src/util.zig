@@ -219,6 +219,15 @@ pub inline fn dedupeSlices(
     }
 }
 
+pub inline fn implicitDeref(ptr_or_val: anytype) ImplicitDeref(@TypeOf(ptr_or_val)) {
+    return switch (@typeInfo(@TypeOf(ptr_or_val))) {
+        .Pointer => |info| switch (info.size) {
+            .One => ptr_or_val.*,
+            else => ptr_or_val,
+        },
+        else => ptr_or_val,
+    };
+}
 pub fn ImplicitDeref(comptime T: type) type {
     return switch (@typeInfo(T)) {
         .Pointer => |info| switch (info.size) {
