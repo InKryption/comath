@@ -25,11 +25,12 @@ const Number = parse.Number;
 ///   Float   # A zig float literal
 ///   Group = '(' $Expr ')'
 ///   FieldAccess = $Expr '.' ($Ident|$OperatorSymbol)+
-///   IndexAccess = $Expr '[' $Expr ']'
-///   FuncCall = $Expr '(' ($Expr ','?)* ')'
+///   IndexAccess = $Expr '[' $ExprList ']'
+///   FuncCall    = $Expr '(' $ExprList ')'
 ///   UnOp = $Operator $Expr
 ///   BinOp = $Expr $Operator $Expr
 ///
+///   ExprList = ($Expr ','?)*
 ///   Operator = $OperatorSymbol+
 ///   OperatorSymbol = ['!' '#' '$' '%' '&' '*' '+' '-' '/' '<' '=' '>' '?' '@' '~' '^' '|' ':']
 /// ```
@@ -59,7 +60,8 @@ const Number = parse.Number;
 ///
 ///     + `EvalIndexAccess: fn (comptime Lhs: type, comptime Rhs: type) type`
 ///     + `evalIndexAccess: fn (ctx: @This(), lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs))`
-///         Returns the value that should result from an expression `lhs[rhs]`.
+///         Returns the value that should result from an expression `lhs[rhs...]`, where each of the elements of the tuple `rhs`
+///         are the indices that should be used to access `lhs`.
 ///
 ///     + `EvalFuncCall: fn (comptime Callee: type, comptime Args: type) type`
 ///     + `evalFuncCall: fn (ctx: @This(), callee: anytype, args: anytype) !EvalFuncCall(@TypeOf(callee), @TypeOf(args))`
@@ -165,7 +167,7 @@ fn EvalImpl(
         },
         .index_access => |ia| blk: {
             const Lhs = EvalImpl(ia.accessed, Ctx, Inputs);
-            const Rhs = EvalImpl(ia.accessor, Ctx, Inputs);
+            const Rhs = EvalExprTupleImpl(ia.accessor, Ctx, Inputs);
             break :blk EvalIndexAccess(Lhs, Rhs);
         },
         .func_call => |fc| blk: {
@@ -257,8 +259,14 @@ inline fn evalImpl(
             const Lhs = EvalImpl(ia.accessed, Ctx, Inputs);
             const lhs: Lhs = try evalImpl(ia.accessed, ctx, inputs);
 
-            const Rhs = EvalImpl(ia.accessor, Ctx, Inputs);
-            const rhs: Rhs = try evalImpl(ia.accessor, ctx, inputs);
+            const Rhs = EvalExprTupleImpl(ia.accessor, Ctx, Inputs);
+            const rhs: Rhs = rhs: {
+                if (comptime util.typeIsComptimeOnly(Rhs).?) {
+                    break :rhs try comptime evalExprTupleImpl(ia.accessor, ctx, inputs);
+                } else {
+                    break :rhs try evalExprTupleImpl(ia.accessor, ctx, inputs);
+                }
+            };
 
             break :blk ctx.evalIndexAccess(lhs, rhs);
         },
@@ -313,11 +321,24 @@ test eval {
         }
 
         pub fn EvalIndexAccess(comptime Lhs: type, comptime Rhs: type) type {
-            _ = Rhs;
-            return std.meta.Elem(Lhs);
+            return switch (@typeInfo(Rhs).Struct.fields.len) {
+                0 => Lhs,
+                1 => std.meta.Elem(Lhs),
+                else => |n| [n]std.meta.Elem(Lhs),
+            };
         }
         pub fn evalIndexAccess(_: @This(), lhs: anytype, rhs: anytype) EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
-            return lhs[rhs];
+            return switch (@typeInfo(@TypeOf(rhs)).Struct.fields.len) {
+                0 => lhs,
+                1 => lhs[rhs[0]],
+                else => |n| blk: {
+                    var result: [n]std.meta.Elem(@TypeOf(lhs)) = undefined;
+                    inline for (rhs, 0..) |access, i| {
+                        result[i] = lhs[access];
+                    }
+                    break :blk result;
+                },
+            };
         }
 
         pub fn EvalFuncCall(comptime Callee: type, comptime Args: type) type {

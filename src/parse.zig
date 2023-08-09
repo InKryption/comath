@@ -103,7 +103,7 @@ test parseExpr {
                 .accessor = field,
             } };
         }
-        inline fn indexAccess(comptime lhs: ExprNode, comptime idx: ExprNode) ExprNode {
+        inline fn indexAccess(comptime lhs: ExprNode, comptime idx: []const ExprNode) ExprNode {
             return .{ .index_access = &.{
                 .accessed = lhs,
                 .accessor = idx,
@@ -176,12 +176,15 @@ test parseExpr {
     try Tester.expectEqual("a.b", fieldAccess(ident("a"), "b"));
     try Tester.expectEqual("a + b.c", binOp(ident("a"), "+", fieldAccess(ident("b"), "c")));
     try Tester.expectEqual("(a + b).c", fieldAccess(group(binOp(ident("a"), "+", ident("b"))), "c"));
+    try Tester.expectEqual("foo.b@r", fieldAccess(ident("foo"), "b@r"));
+    try Tester.expectEqual("foo.?", fieldAccess(ident("foo"), "?"));
+    try Tester.expectEqual("foo.0", fieldAccess(ident("foo"), "0"));
 
-    try Tester.expectEqual("a[b]", indexAccess(ident("a"), ident("b")));
-    try Tester.expectEqual("(a)[(b)]", indexAccess(group(ident("a")), group(ident("b"))));
+    try Tester.expectEqual("a[b]", indexAccess(ident("a"), &.{ident("b")}));
+    try Tester.expectEqual("(a)[(b)]", indexAccess(group(ident("a")), &.{group(ident("b"))}));
     try Tester.expectEqual("(~(a + b))[(c)]", indexAccess(
         group(unOp("~", group(binOp(ident("a"), "+", ident("b"))))),
-        group(ident("c")),
+        &.{group(ident("c"))},
     ));
 
     try Tester.expectEqual("foo()", funcCall(ident("foo"), &.{}));
@@ -189,6 +192,12 @@ test parseExpr {
     try Tester.expectEqual("foo(bar,)", funcCall(ident("foo"), &.{ident("bar")}));
     try Tester.expectEqual("foo(bar,baz)", funcCall(ident("foo"), &.{ ident("bar"), ident("baz") }));
     try Tester.expectEqual("foo(bar, baz, )", funcCall(ident("foo"), &.{ ident("bar"), ident("baz") }));
+
+    try Tester.expectEqual("foo[]", indexAccess(ident("foo"), &.{}));
+    try Tester.expectEqual("foo[bar]", indexAccess(ident("foo"), &.{ident("bar")}));
+    try Tester.expectEqual("foo[bar,]", indexAccess(ident("foo"), &.{ident("bar")}));
+    try Tester.expectEqual("foo[bar,baz]", indexAccess(ident("foo"), &.{ ident("bar"), ident("baz") }));
+    try Tester.expectEqual("foo[bar, baz, ]", indexAccess(ident("foo"), &.{ ident("bar"), ident("baz") }));
 }
 
 const NestType = enum(comptime_int) { none, paren, bracket };
@@ -242,39 +251,34 @@ fn parseExprImpl(
                     result = result.concatBinOp(util.dedupeSlice(u8, @tagName(op)), relations);
                 }
             },
-            .paren_open => {
+            inline .paren_open, .bracket_open => |_, tag| {
+                const inner_nest_type = switch (tag) {
+                    .paren_open => .paren,
+                    .bracket_open => .bracket,
+                    else => unreachable,
+                };
+
                 can_be_unary = false;
                 var args: []const ExprNode = &.{};
                 while (true) {
-                    const update = parseExprImpl(expr, .paren, tokenizer, UnOpEnum, BinOpEnum, relations);
+                    const update = parseExprImpl(expr, inner_nest_type, tokenizer, UnOpEnum, BinOpEnum, relations);
                     tokenizer = update.tokenizer;
                     if (update.result != .null) {
                         args = args ++ &[_]ExprNode{update.result};
                     }
                     if (!update.ends_with_comma) break;
                 }
-                result = result.concatFunctionArgsOrJustGroup(util.dedupeSlice(ExprNode, args));
+                result = result.concatFunctionArgsOrJustGroup(inner_nest_type, util.dedupeSlice(ExprNode, args));
+            },
+            .comma => {
+                can_be_unary = undefined;
+                ends_with_comma = true;
+                break;
             },
             .paren_close => {
                 can_be_unary = undefined;
                 if (nest_type != .paren) @compileError("Unexpected closing parentheses");
                 break;
-            },
-            .comma => {
-                can_be_unary = undefined;
-                if (nest_type != .paren) @compileError("Unexpected comma");
-                ends_with_comma = true;
-                break;
-            },
-
-            .bracket_open => {
-                can_be_unary = false;
-                const update = parseExprImpl(expr, .bracket, tokenizer, UnOpEnum, BinOpEnum, relations);
-                tokenizer = update.tokenizer;
-                result = .{ .index_access = &.{
-                    .accessed = result,
-                    .accessor = update.result,
-                } };
             },
             .bracket_close => {
                 can_be_unary = undefined;
@@ -317,7 +321,15 @@ pub const ExprNode = union(enum) {
             .float => util.eqlComptime(u8, val_a.src, val_b.src),
             .group => val_a.eql(val_b.*),
             .field_access => val_a.accessed.eql(val_b.accessed) and util.eqlComptime(u8, val_a.accessor, val_b.accessor),
-            .index_access => val_a.accessed.eql(val_b.accessed) and val_a.accessor.eql(val_b.accessor),
+            .index_access => val_a.accessed.eql(val_b.accessed) and
+                val_a.accessor.len == val_b.accessor.len and blk: {
+                break :blk for (
+                    val_a.accessor,
+                    val_b.accessor,
+                ) |accessor_a, accessor_b| {
+                    if (!accessor_a.eql(accessor_b)) break false;
+                } else true;
+            },
             .func_call => val_a.callee.eql(val_b.callee) and
                 val_a.args.len == val_b.args.len and blk: {
                 break :blk for (
@@ -492,9 +504,9 @@ pub const ExprNode = union(enum) {
             .un_op => |un| un.insertExprAsInnerTarget(new),
         };
     }
-    inline fn concatFunctionArgsOrJustGroup(comptime base: ExprNode, comptime args: []const ExprNode) ExprNode {
+    inline fn concatFunctionArgsOrJustGroup(comptime base: ExprNode, comptime delimiter: enum { paren, bracket }, comptime args: []const ExprNode) ExprNode {
         return switch (base) {
-            .null => .{ .group = if (args.len != 1) @compileError("Group must be comprised of exactly 1 expression") else &args[0] },
+            .null => .{ .group = if (args.len != 1 or delimiter != .paren) @compileError("Group must be comprised of exactly 1 expression and be delimited by parentheses") else &args[0] },
             .ident,
             .field_access,
             .integer,
@@ -503,18 +515,24 @@ pub const ExprNode = union(enum) {
             .group,
             .index_access,
             .func_call,
-            => .{ .func_call = &.{
-                .callee = base,
-                .args = args,
-            } },
+            => switch (delimiter) {
+                .paren => .{ .func_call = &.{
+                    .callee = base,
+                    .args = args,
+                } },
+                .bracket => .{ .index_access = &.{
+                    .accessed = base,
+                    .accessor = args,
+                } },
+            },
             .bin_op => |bin| .{ .bin_op = &.{
                 .lhs = bin.lhs,
                 .op = bin.op,
-                .rhs = bin.rhs.concatFunctionArgsOrJustGroup(args),
+                .rhs = bin.rhs.concatFunctionArgsOrJustGroup(delimiter, args),
             } },
             .un_op => |un| .{ .un_op = &.{
                 .op = un.op,
-                .val = un.val.concatFunctionArgsOrJustGroup(args),
+                .val = un.val.concatFunctionArgsOrJustGroup(delimiter, args),
             } },
         };
     }
@@ -558,7 +576,7 @@ pub const ExprNode = union(enum) {
     };
     const IndexAccess = struct {
         accessed: ExprNode,
-        accessor: ExprNode,
+        accessor: []const ExprNode,
 
         inline fn dedupe(comptime ia: IndexAccess) IndexAccess {
             return .{
