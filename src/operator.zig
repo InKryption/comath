@@ -14,7 +14,7 @@ pub const Relation = struct {
 };
 
 pub fn RelationMap(comptime BinOpEnum: type) type {
-    return std.enums.EnumFieldStruct(Enum(BinOpEnum), Relation, null);
+    return std.enums.EnumFieldStruct(util.DedupedEnum(BinOpEnum), ?Relation, @as(?Relation, null));
 }
 
 pub inline fn relation(
@@ -25,35 +25,6 @@ pub inline fn relation(
         .assoc = assoc,
         .prec = prec,
     };
-}
-
-pub fn Enum(comptime E: type) type {
-    const info = @typeInfo(E).Enum;
-    comptime var fields: [info.fields.len]std.builtin.Type.EnumField = info.fields[0..].*;
-    for (&fields, 0..) |*field, i| field.* = .{
-        .name = util.dedupeSlice(u8, field.name),
-        .value = i,
-    };
-    std.sort.insertionContext(0, fields.len, struct {
-        pub fn swap(a: usize, b: usize) void {
-            std.mem.swap([]const u8, &fields[a].name, &fields[b].name);
-        }
-        pub fn lessThan(a: usize, b: usize) bool {
-            return util.orderComptime(u8, fields[a].name, fields[b].name) == .lt;
-        }
-    });
-    return EnumImpl(fields.len, fields);
-}
-fn EnumImpl(
-    comptime field_count: comptime_int,
-    comptime fields: [field_count]std.builtin.Type.EnumField,
-) type {
-    return @Type(.{ .Enum = .{
-        .tag_type = std.math.IntFittingRange(0, fields.len -| 1),
-        .is_exhaustive = true,
-        .decls = &.{},
-        .fields = &fields,
-    } });
 }
 
 pub fn OpEnumUnion(comptime A: type, comptime B: type) type {

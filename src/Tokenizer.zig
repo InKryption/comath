@@ -12,10 +12,11 @@ pub const operator_characters: []const u8 = &[_]u8{
     '+', '-', '/', '<', '=', '>',
     '?', '@', '~', '^', '|', ':',
 };
-pub const identifier_characters: []const u8 =
+pub const identifier_start_characters: []const u8 =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ" ++
     "abcdefghijklmnopqrstuvwxyz" ++
-    "0123456789" ++ "_";
+    "_";
+pub const identifier_characters: []const u8 = identifier_start_characters ++ "0123456789";
 
 pub const Token = union(enum) {
     /// no more tokens left
@@ -64,6 +65,7 @@ pub inline fn nextOp(
         return @field(OpEnum, result.op[0..]);
     }
 }
+
 pub inline fn peek(
     comptime tokenizer: Tokenizer,
     comptime buffer: []const u8,
@@ -80,6 +82,15 @@ pub inline fn peekOp(
         const result = tokenizer.peekOpImpl(util.dedupeSlice(u8, buffer), OpEnum);
         return result.op;
     }
+}
+
+pub inline fn skipOps(
+    comptime tokenizer: *Tokenizer,
+) bool {
+    const skipped = tokenizer.op_symbols_end != null;
+    if (tokenizer.op_symbols_end) |end| tokenizer.index = end;
+    tokenizer.op_symbols_end = null;
+    return skipped;
 }
 
 const PeekOpRes = struct {

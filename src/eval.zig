@@ -36,6 +36,11 @@ const Number = parse.Number;
 ///
 /// * `ctx`:
 ///     Should be a value of a type with a namespace containing:
+///     + `allow_unused_inputs: bool = false`
+///         Boolean constant which with a value of `true` disables checking for unused inputs,
+///         and with a value of `false` causes a compile error to be issued for unused inputs.
+///         This declaration can be omitted, and defaults to `false`.
+///
 ///     + `UnOp: type`
 ///         Enum type containing tags whose names correspond to operators, which
 ///         must only be comprised of symbols contained in `operator.symbols`
@@ -44,17 +49,17 @@ const Number = parse.Number;
 ///         Same constraints as `UnOp`
 ///
 ///     + `relations: operator.RelationMap(BinOp) | @TypeOf(.{...})`
-///         Struct value whose fields all correspond to the binary operators defined by `BinOp`,
+///         Struct constant whose fields all correspond to the binary operators defined by `BinOp`,
 ///         each with a value of type `operator.Relation` describing the binary operator's precedence
 ///         level and associativity.
 ///
 ///     + `EvalProperty: fn (comptime Lhs: type, comptime field: []const u8) type`
 ///     + `evalProperty: fn (ctx: @This(), lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field)`
-///         Returns the value that should result from an expression `lhs.field`
+///         Returns the value that should result from an expression `lhs.field`.
 ///
 ///     + `EvalIndexAccess: fn (comptime Lhs: type, comptime Rhs: type) type`
 ///     + `evalIndexAccess: fn (ctx: @This(), lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs))`
-///         Returns the value that should result from an expression `lhs[rhs]`
+///         Returns the value that should result from an expression `lhs[rhs]`.
 ///
 ///     + `EvalFuncCall: fn (comptime Callee: type, comptime Args: type) type`
 ///     + `evalFuncCall: fn (ctx: @This(), callee: anytype, args: anytype) !EvalFuncCall(@TypeOf(callee), @TypeOf(args))`
@@ -63,11 +68,11 @@ const Number = parse.Number;
 ///
 ///     + `EvalUnOp: fn (comptime op: UnOp, comptime T: type) type`
 ///     + `evalUnOp: fn (ctx: @This(), comptime op: UnOp, value: anytype) !EvalUnOp(op, @TypeOf(value))`
-///         Returns the value that should result from an expression `op value`
+///         Returns the value that should result from an expression `op value`.
 ///
 ///     + `EvalBinOp: fn (comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type`
 ///     + `evalBinOp: fn (ctx: @This(), lhs: anytype, comptime op: BinOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs))`
-///         Returns the value that should result from an expression `lhs op rhs`
+///         Returns the value that should result from an expression `lhs op rhs`.
 ///
 /// Important to note that in order to work with character and float literals, the implementations of the
 /// functions listed above must account for `comath.Char` and `comath.Number`, respectively.
@@ -82,8 +87,45 @@ pub inline fn eval(
 ) !Eval(expr, @TypeOf(ctx), @TypeOf(inputs)) {
     const Ctx = @TypeOf(ctx);
     const Ns = util.ImplicitDeref(Ctx);
+    const Inputs = @TypeOf(inputs);
+    const allow_unused_inputs: bool = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
+    comptime if (!allow_unused_inputs and @typeInfo(Inputs).Struct.fields.len != 0) {
+        const InputTag = util.DedupedEnum(std.meta.FieldEnum(Inputs));
+        const deduped_expr = util.dedupeSlice(u8, expr);
+        analyzeUnusedInputs(deduped_expr, InputTag) catch |err| @compileError(@errorName(err));
+    };
     const root = comptime parse.parseExpr(expr, Ns.UnOp, Ns.BinOp, Ns.relations);
     return evalImpl(root, ctx, inputs);
+}
+inline fn analyzeUnusedInputs(
+    comptime expr: []const u8,
+    comptime InputTag: type,
+) !void {
+    comptime {
+        var unused_set = std.EnumSet(InputTag).initFull();
+        var tokenizer = Tokenizer{};
+        @setEvalBranchQuota(expr.len * 100);
+        while (true) switch (tokenizer.next(expr)) {
+            .eof => break,
+            .ident => |ident| unused_set.remove(@field(InputTag, ident)),
+            .op_symbols => if (!tokenizer.skipOps()) unreachable,
+            else => {},
+        };
+        var err_str: []const u8 = "";
+        var iter = unused_set.iterator();
+        @setEvalBranchQuota(unused_set.count() + 1);
+        while (iter.next()) |unused| {
+            const comma = if (err_str.len == 0) "" else ", ";
+            err_str = comma ++ @tagName(unused);
+        }
+
+        const err_msg_prefix = if (unused_set.count() > 1)
+            "Unused inputs: "
+        else
+            "Unused input: ";
+        if (err_str.len != 0)
+            return @field(anyerror, err_msg_prefix ++ err_str);
+    }
 }
 
 pub fn Eval(
@@ -174,6 +216,20 @@ fn EvalExprTupleImpl(
         .fields = &fields,
     } });
 }
+fn evalExprTupleImpl(
+    comptime list: []const parse.ExprNode,
+    ctx: anytype,
+    inputs: anytype,
+) !EvalExprTupleImpl(list, @TypeOf(ctx), @TypeOf(inputs)) {
+    const Tuple = EvalExprTupleImpl(list, @TypeOf(ctx), @TypeOf(inputs));
+    var args: Tuple = undefined;
+    @setEvalBranchQuota(args.len * 2);
+    inline for (list, 0..) |arg, i| {
+        if (@typeInfo(Tuple).Struct.fields[i].is_comptime) continue;
+        args[i] = try evalImpl(arg, ctx, inputs);
+    }
+    return args;
+}
 
 inline fn evalImpl(
     comptime expr: parse.ExprNode,
@@ -212,20 +268,10 @@ inline fn evalImpl(
 
             const Args = EvalExprTupleImpl(fc.args, Ctx, Inputs);
             const args: Args = args: {
-                if (util.typeIsComptimeOnly(Args).?) {
-                    var args: Args = undefined;
-                    inline for (fc.args, 0..) |arg, i| {
-                        if (@typeInfo(Args).Struct.fields[i].is_comptime) continue;
-                        args[i] = try evalImpl(arg, ctx, inputs);
-                    }
-                    break :args args;
-                } else comptime {
-                    var args: Args = undefined;
-                    inline for (fc.args, 0..) |arg, i| {
-                        if (@typeInfo(Args).Struct.fields[i].is_comptime) continue;
-                        args[i] = try evalImpl(arg, ctx, inputs);
-                    }
-                    break :args args;
+                if (comptime util.typeIsComptimeOnly(Args).?) {
+                    break :args try comptime evalExprTupleImpl(fc.args, ctx, inputs);
+                } else {
+                    break :args try evalExprTupleImpl(fc.args, ctx, inputs);
                 }
             };
 

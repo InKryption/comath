@@ -59,6 +59,8 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
         };
         const Ns = if (significant_ctx) util.ImplicitDeref(SubCtx) else struct {};
 
+        pub const allow_unused_inputs = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
+
         pub const UnOp = if (!@hasDecl(Ns, "UnOp")) SimpleUnOp else operator.OpEnumUnion(SimpleUnOp, Ns.UnOp);
         pub const BinOp = if (!@hasDecl(Ns, "BinOp")) SimpleBinOp else operator.OpEnumUnion(SimpleBinOp, Ns.BinOp);
         pub const relations: operator.RelationMap(BinOp) = if (!@hasDecl(Ns, "relations"))

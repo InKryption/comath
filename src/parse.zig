@@ -414,8 +414,8 @@ pub const ExprNode = union(enum) {
                 .float,
                 .group,
                 => blk: {
-                    const old_rel: operator.Relation = @field(relations, bin.op);
-                    const new_rel: operator.Relation = @field(relations, op);
+                    const old_rel: operator.Relation = @field(relations, bin.op) orelse @compileError("No definition for the relation of `" ++ bin.op ++ "`");
+                    const new_rel: operator.Relation = @field(relations, op) orelse @compileError("No definition for the relation of `" ++ op ++ "`");
                     if (old_rel.prec == new_rel.prec and old_rel.assoc != new_rel.assoc) {
                         @compileError(bin.op ++ " cannot be chained with " ++ op);
                     }
@@ -460,10 +460,10 @@ pub const ExprNode = union(enum) {
             .group,
             => @compileError(std.fmt.comptimePrint("Unexpected token '{}'", .{new.fmt()})),
 
-            .func_call => |fc| ExprNode.dedupe(.{ .func_call = &.{
+            .func_call => |fc| .{ .func_call = &.{
                 .callee = fc.callee,
                 .args = fc.args ++ if (new.group.* == .null) &.{} else &[_]ExprNode{new.group.*},
-            } }).*,
+            } },
 
             .bin_op => |bin| switch (bin.rhs) {
                 .null => .{ .bin_op = &.{
@@ -545,48 +545,6 @@ pub const ExprNode = union(enum) {
         };
     }
 
-    const dedupe = struct {
-        inline fn dedupe(comptime expr: ExprNode) *const ExprNode {
-            if (true) @compileError("reach");
-            comptime return switch (expr) {
-                .null => dedupeImpl(expr),
-                .ident => |ident| dedupeImpl(.{ .ident = util.dedupeSlice(u8, ident) }),
-                .integer => dedupeImpl(expr),
-                .char => dedupeImpl(expr),
-                .float => |num| dedupeImpl(.{ .float = Number{ .src = util.dedupeSlice(u8, num.src) } }),
-                .group => |group| dedupeImpl(.{ .group = group.dedupe() }),
-                .field_access => |fa| dedupeImpl(.{ .field_access = &.{
-                    .accessed = fa.accessed,
-                    .accessor = util.dedupeSlice(u8, fa.accessor),
-                } }),
-                .index_access => |ia| dedupeImpl(.{ .index_access = .{
-                    .accessed = ia.accessed.dedupe(),
-                    .accessor = ia.accessor.dedupe(),
-                } }),
-                .func_call => |fc| dedupeImpl(.{ .func_call = &fc.dedupe() }),
-                .bin_op => |bin| dedupeImpl(.{ .bin_op = .{
-                    .lhs = bin.lhs.dedupe(),
-                    .op = bin.op,
-                    .rhs = bin.rhs.dedupe(),
-                } }),
-                .un_op => |un| dedupeImpl(.{ .un_op = .{
-                    .op = un.op,
-                    .val = un.val.dedupe(),
-                } }),
-            };
-        }
-        fn dedupeImpl(comptime expr: ExprNode) *const ExprNode {
-            return &expr;
-        }
-    }.dedupe;
-    inline fn dedupeExprSlice(comptime slice: []const ExprNode) *const [slice.len]ExprNode {
-        comptime {
-            var array = slice[0..].*;
-            for (&array) |*expr| expr.* = expr.dedupe().*;
-            return util.dedupeSlice(ExprNode, &array);
-        }
-    }
-
     const FieldAccess = struct {
         accessed: ExprNode,
         accessor: []const u8,
@@ -612,37 +570,15 @@ pub const ExprNode = union(enum) {
     pub const FuncCall = struct {
         callee: ExprNode,
         args: []const ExprNode,
-
-        inline fn dedupe(comptime fc: FuncCall) FuncCall {
-            return .{
-                .callee = fc.callee.dedupe().*,
-                .args = dedupeExprSlice(fc.args),
-            };
-        }
     };
     const BinOp = struct {
         lhs: ExprNode,
         op: []const u8,
         rhs: ExprNode,
-
-        inline fn dedupe(comptime bin: BinOp) BinOp {
-            return .{
-                .lhs = bin.lhs.dedupe(),
-                .op = bin.op,
-                .rhs = bin.rhs.dedupe(),
-            };
-        }
     };
     const UnOp = struct {
         op: []const u8,
         val: ExprNode,
-
-        inline fn dedupe(comptime un: UnOp) UnOp {
-            return .{
-                .op = un.op,
-                .val = un.val.dedupe(),
-            };
-        }
 
         inline fn insertExprAsInnerTarget(comptime un: UnOp, comptime expr: ExprNode) ExprNode {
             return switch (un.val) {
@@ -676,7 +612,7 @@ pub const ExprNode = union(enum) {
                 },
                 .un_op => |inner| return if (inner.concatOpInnerImpl(op)) |updated| .{
                     .op = un.op,
-                    .val = ExprNode.dedupe(.{ .un_op = updated }),
+                    .val = .{ .un_op = &updated },
                 },
                 else => return null,
             }

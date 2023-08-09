@@ -14,6 +14,43 @@ pub const testing = struct {
     }
 };
 
+pub inline fn dedupeEnum(value: anytype) DedupedEnum(@TypeOf(value)) {
+    const T = @TypeOf(value);
+    const Deduped = DedupedEnum(T);
+    inline for (@typeInfo(T).Enum.fields) |field| {
+        const tag = @field(T, field.name);
+        if (tag == value) return @field(Deduped, field.name);
+    }
+}
+pub fn DedupedEnum(comptime E: type) type {
+    const info = @typeInfo(E).Enum;
+    comptime var fields: [info.fields.len]std.builtin.Type.EnumField = info.fields[0..].*;
+    for (&fields, 0..) |*field, i| field.* = .{
+        .name = util.dedupeSlice(u8, field.name),
+        .value = i,
+    };
+    if (fields.len == 0) return DedupedEnumImpl(fields.len, fields);
+    std.sort.insertionContext(0, fields.len, struct {
+        pub fn swap(a: usize, b: usize) void {
+            std.mem.swap([]const u8, &fields[a].name, &fields[b].name);
+        }
+        pub fn lessThan(a: usize, b: usize) bool {
+            return util.orderComptime(u8, fields[a].name, fields[b].name) == .lt;
+        }
+    });
+    return DedupedEnumImpl(fields.len, fields);
+}
+fn DedupedEnumImpl(
+    comptime field_count: comptime_int,
+    comptime fields: [field_count]std.builtin.Type.EnumField,
+) type {
+    return @Type(.{ .Enum = .{
+        .tag_type = std.math.IntFittingRange(0, fields.len -| 1),
+        .is_exhaustive = true,
+        .decls = &.{},
+        .fields = &fields,
+    } });
+}
 pub inline fn eqlComptime(comptime T: type, comptime a: []const T, comptime b: []const T) bool {
     comptime return @reduce(.And, vec(T, a[0..].*) == vec(T, b[0..].*));
 }
@@ -39,14 +76,14 @@ pub inline fn orderComptime(comptime T: type, comptime a: []const T, comptime b:
 pub inline fn vec(comptime T: type, init: anytype) @Vector(init.len, T) {
     return init[0..].*;
 }
-pub inline fn simdOr(a: anytype, b: anytype) @Vector(@typeInfo(@TypeOf(a, b).Vector.len), bool) {
+pub inline fn simdOr(a: anytype, b: anytype) @Vector(@typeInfo(@TypeOf(a, b)).Vector.len, bool) {
     const T = @TypeOf(a, b);
     const len = @typeInfo(T).Vector.len;
     const a_bits: @Vector(len, u1) = @bitCast(a);
     const b_bits: @Vector(len, u1) = @bitCast(b);
     return @bitCast(a_bits | b_bits);
 }
-pub inline fn simdAnd(a: anytype, b: anytype) @Vector(@typeInfo(@TypeOf(a, b).Vector.len), bool) {
+pub inline fn simdAnd(a: anytype, b: anytype) @Vector(@typeInfo(@TypeOf(a, b)).Vector.len, bool) {
     const T = @TypeOf(a, b);
     const len = @typeInfo(T).Vector.len;
     const a_bits: @Vector(len, u1) = @bitCast(a);
@@ -142,12 +179,13 @@ pub const indexOfNoneComptime = struct {
         @setEvalBranchQuota(@min(std.math.maxInt(u32), (excluded.len + 1) * 100));
         for (excluded) |ex| {
             const ex_vec: @Vector(arr.len, T) = @splat(ex);
-            const prev: @Vector(arr.len, u1) = @bitCast(trues);
-            const current: @Vector(arr.len, u1) = @bitCast(vec(T, arr) != ex_vec);
-            trues = @bitCast(prev & current);
+            // const prev: @Vector(arr.len, u1) = @bitCast(trues);
+            const current = vec(T, arr) != ex_vec;
+            // trues = @bitCast(prev & current);
+            trues = simdAnd(trues, current);
         }
 
-        return std.simd.firstTrue(trues) orelse return null;
+        return std.simd.firstTrue(trues) orelse null;
     }
 }.indexOfNoneComptime;
 
@@ -206,11 +244,14 @@ pub inline fn typeIsComptimeOnly(comptime T: type) ?bool {
         .NoReturn => null,
         .Int => false,
         .Float => false,
-        .Pointer => |pointer| if (typeIsComptimeOnly(pointer.child)) |is_comptime_only| is_comptime_only and switch (pointer.size) {
-            .One => @typeInfo(pointer.child) != .Opaque or (pointer.is_const and @typeInfo(pointer.child) != .Fn),
-            else => true,
-        } else null,
-        .Array => |array| array.len != 0 and typeIsComptimeOnly(array.child),
+        .Pointer => |pointer| switch (pointer.size) {
+            .One => switch (@typeInfo(pointer.child)) {
+                .Opaque => false,
+                else => typeIsComptimeOnly(pointer.child),
+            },
+            else => typeIsComptimeOnly(pointer.child),
+        },
+        .Array => |array| array.len != 0 and typeIsComptimeOnly(array.child) orelse return null,
         .Struct => |structure| for (structure.fields) |field| {
             if (field.is_comptime) continue;
             if (!(typeIsComptimeOnly(field.type) orelse return null)) continue;
@@ -220,19 +261,40 @@ pub inline fn typeIsComptimeOnly(comptime T: type) ?bool {
         .ComptimeInt => true,
         .Undefined => null,
         .Null => null,
-        .Optional => |optional| typeIsComptimeOnly(optional.child),
-        .ErrorUnion => |optional| typeIsComptimeOnly(optional.payload),
+        .Optional => |optional| if (optional.child == noreturn) false else typeIsComptimeOnly(optional.child),
+        .ErrorUnion => |err_union| blk: {
+            if (err_union.payload == noreturn) {
+                if (@typeInfo(err_union.error_set).ErrorSet != null and
+                    @typeInfo(err_union.error_set).ErrorSet.?.len == 0)
+                {
+                    break :blk null;
+                }
+                break :blk false;
+            }
+            break :blk typeIsComptimeOnly(err_union.payload);
+        },
         .ErrorSet => false,
-        .Enum => |enumeration| typeIsComptimeOnly(enumeration.tag_type),
-        .Union => |@"union"| typeIsComptimeOnly(@"union".tag_type orelse enum {}) and for (@"union".fields) |field| {
-            if (!typeIsComptimeOnly(field.type)) continue;
-            break true;
-        } else false,
+        .Enum => |enumeration| typeIsComptimeOnly(enumeration.tag_type).?,
+        .Union => |@"union"| blk: {
+            if (@"union".tag_type != null and
+                typeIsComptimeOnly(@"union".tag_type.?).?)
+            {
+                break :blk true;
+            }
+            var all_noreturn = true;
+            break :blk for (@"union".fields) |field| switch (@typeInfo(field.type)) {
+                .NoReturn => {},
+                else => {
+                    all_noreturn = false;
+                    if (typeIsComptimeOnly(field.type).?) break true;
+                },
+            } else if (all_noreturn) null else false;
+        },
         .Fn => true,
         .Opaque => null,
         .Frame => false,
         .AnyFrame => false,
-        .Vector => |vector| typeIsComptimeOnly(vector.child),
+        .Vector => |vector| typeIsComptimeOnly(vector.child) and @compileError("Vectors aren't supposed to have comptime-only elements?"),
         .EnumLiteral => true,
     };
 }
