@@ -12,7 +12,7 @@ wherein the `expr` is expected to be source code representing an expression comp
 * Integer, float, or character literals
 * Grouped expressions delimited by parentheses
 * Field accesses (`expression`.`identifier`|`operator symbols`)
-* Index accesses (`expression`[`expression`])
+* Index accesses (`expression`[`expressions`])
 * Function calls (`expression`(`expressions`))
 * Unary operations (`operator` `expression`)
 * Binary operations (`expression` `operator` `expression`)
