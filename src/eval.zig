@@ -303,7 +303,7 @@ inline fn evalImpl(
 }
 
 test eval {
-    const SimpleCtx = struct {
+    const BasicCtx = struct {
         pub const UnOp = enum { @"-" };
         pub const BinOp = enum { @"+", @"-", @"*", @"/" };
         pub const relations: operator.RelationMap(BinOp) = .{
@@ -375,20 +375,20 @@ test eval {
             };
         }
     };
-    try util.testing.expectEqual(3, eval("x[y]", SimpleCtx{}, .{
+    try util.testing.expectEqual(3, eval("x[y]", BasicCtx{}, .{
         .x = [3]u16{ 0, 3, 7 },
         .y = 1,
     }));
-    try util.testing.expectEqual(.{ 1, 2, 3 }, eval("x + y", SimpleCtx{}, .{
+    try util.testing.expectEqual(.{ 1, 2, 3 }, eval("x + y", BasicCtx{}, .{
         .x = std.simd.iota(u8, 3),
         .y = @as(@Vector(3, u8), @splat(1)),
     }));
-    try util.testing.expectEqual(-4, eval("-4", SimpleCtx{}, .{}));
-    try util.testing.expectEqual(7, eval("a + 3", SimpleCtx{}, .{ .a = 4 }));
-    try util.testing.expectEqual(2, eval("a / 2", SimpleCtx{}, .{ .a = 4 }));
-    try util.testing.expectEqual(12, eval("(y + 2) * x", SimpleCtx{}, .{ .y = 2, .x = 3 }));
-    try util.testing.expectEqual(8, eval("y + 2 * x", SimpleCtx{}, .{ .y = 2, .x = 3 }));
-    try util.testing.expectEqual(3, eval("a.b", SimpleCtx{}, .{ .a = .{ .b = 3 } }));
+    try util.testing.expectEqual(-4, eval("-4", BasicCtx{}, .{}));
+    try util.testing.expectEqual(7, eval("a + 3", BasicCtx{}, .{ .a = 4 }));
+    try util.testing.expectEqual(2, eval("a / 2", BasicCtx{}, .{ .a = 4 }));
+    try util.testing.expectEqual(12, eval("(y + 2) * x", BasicCtx{}, .{ .y = 2, .x = 3 }));
+    try util.testing.expectEqual(8, eval("y + 2 * x", BasicCtx{}, .{ .y = 2, .x = 3 }));
+    try util.testing.expectEqual(3, eval("a.b", BasicCtx{}, .{ .a = .{ .b = 3 } }));
 
     const test_fns = struct {
         // zig fmt: off
@@ -397,12 +397,14 @@ test eval {
         inline fn sub(a: i32, b: i32) u32 { return a - b; }
         // zig fmt: on
     };
-    try util.testing.expectEqual(15, eval("get15()", SimpleCtx{}, .{ .get15 = test_fns.get15 }));
-    try util.testing.expectEqual(16, eval("addOne(15)", SimpleCtx{}, .{ .addOne = test_fns.addOne }));
-    try util.testing.expectEqual(17, eval("sub(19, 2)", SimpleCtx{}, .{ .sub = test_fns.sub }));
+    try util.testing.expectEqual(15, eval("get15()", BasicCtx{}, .{ .get15 = test_fns.get15 }));
+    try util.testing.expectEqual(16, eval("addOne(15)", BasicCtx{}, .{ .addOne = test_fns.addOne }));
+    try util.testing.expectEqual(17, eval("sub(19, 2)", BasicCtx{}, .{ .sub = test_fns.sub }));
 
-    try util.testing.expectEqual(30, eval("2 * get15()", SimpleCtx{}, .{ .get15 = test_fns.get15 }));
-    try util.testing.expectEqual(-45, eval("(3 * -get15())", SimpleCtx{}, .{ .get15 = test_fns.get15 }));
+    try util.testing.expectEqual(30, eval("2 * get15()", BasicCtx{}, .{ .get15 = test_fns.get15 }));
+    try util.testing.expectEqual(-45, eval("(3 * -get15())", BasicCtx{}, .{ .get15 = test_fns.get15 }));
+
+    try util.testing.expectEqual([_]u8{ 'a', 'b', 'c' }, eval("a[0, 2, 4]", BasicCtx{}, .{ .a = "a b c" }));
 
     const PowCtx = struct {
         pub const UnOp = enum {};
