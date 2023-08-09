@@ -5,48 +5,79 @@ const util = @import("util");
 const Tokenizer = @import("Tokenizer.zig");
 const parse = @import("parse.zig");
 
-pub const contexts = @import("contexts.zig");
-pub const operator = @import("operator.zig");
-pub const Char = parse.Char;
-pub const Number = parse.Number;
-
-comptime {
-    _ = Tokenizer;
-    _ = parse;
-    _ = contexts;
-}
+const operator = @import("operator.zig");
+const Char = parse.Char;
+const Number = parse.Number;
 
 /// Evaluates `expr` as an expression, wherein the operations are defined
 /// by `ctx`, and the values of variables may be set via `inputs`.
+///
+/// * `expr`:
+/// Source code representing an expression generally comparable in structure to
+/// mathematical and programming notation in most C-like programming languages.
+/// A simple representation of the accepted grammar is:
+/// ```
+///   Expr = $Ident | $Integer | $Char | $Float | $Group | $FieldAccess | $IndexAccess | $FuncCall | $UnOp | $BinOp
+///
+///   Ident = ['A'-'Z' 'a'-'z' '_']['A'-'Z' 'a'-'z' '_' '0'-'9']*
+///   Integer # A zig integer literal
+///   Char    # A zig char literal
+///   Float   # A zig float literal
+///   Group = '(' $Expr ')'
+///   FieldAccess = $Expr '.' ($Ident|$OperatorSymbol)+
+///   IndexAccess = $Expr '[' $Expr ']'
+///   FuncCall = $Expr '(' ($Expr ','?)* ')'
+///   UnOp = $Operator $Expr
+///   BinOp = $Expr $Operator $Expr
+///
+///   Operator = $OperatorSymbol+
+///   OperatorSymbol = ['!' '#' '$' '%' '&' '*' '+' '-' '/' '<' '=' '>' '?' '@' '~' '^' '|' ':']
+/// ```
+///
+/// * `ctx`:
+///     Should be a value of a type with a namespace containing:
+///     + `UnOp: type`
+///         Enum type containing tags whose names correspond to operators, which
+///         must only be comprised of symbols contained in `operator.symbols`
+///
+///     + `BinOp: type`
+///         Same constraints as `UnOp`
+///
+///     + `relations: operator.RelationMap(BinOp) | @TypeOf(.{...})`
+///         Struct value whose fields all correspond to the binary operators defined by `BinOp`,
+///         each with a value of type `operator.Relation` describing the binary operator's precedence
+///         level and associativity.
+///
+///     + `EvalProperty: fn (comptime Lhs: type, comptime field: []const u8) type`
+///     + `evalProperty: fn (ctx: @This(), lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field)`
+///         Returns the value that should result from an expression `lhs.field`
+///
+///     + `EvalIndexAccess: fn (comptime Lhs: type, comptime Rhs: type) type`
+///     + `evalIndexAccess: fn (ctx: @This(), lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs))`
+///         Returns the value that should result from an expression `lhs[rhs]`
+///
+///     + `EvalFuncCall: fn (comptime Callee: type, comptime Args: type) type`
+///     + `evalFuncCall: fn (ctx: @This(), callee: anytype, args: anytype) !EvalFuncCall(@TypeOf(callee), @TypeOf(args))`
+///         Returns the value that should result from an expression `callee(args...)`, where each of the elements of the tuple `args`
+///         are the arguments that should be passed to `callee`.
+///
+///     + `EvalUnOp: fn (comptime op: UnOp, comptime T: type) type`
+///     + `evalUnOp: fn (ctx: @This(), comptime op: UnOp, value: anytype) !EvalUnOp(op, @TypeOf(value))`
+///         Returns the value that should result from an expression `op value`
+///
+///     + `EvalBinOp: fn (comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type`
+///     + `evalBinOp: fn (ctx: @This(), lhs: anytype, comptime op: BinOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs))`
+///         Returns the value that should result from an expression `lhs op rhs`
+///
+/// Important to note that in order to work with character and float literals, the implementations of the
+/// functions listed above must account for `comath.Char` and `comath.Number`, respectively.
+///
+/// * `inputs`:
+/// a non-tuple struct literal whose field names correspond to identifiers in the `expr` source code
+///
 pub inline fn eval(
-    /// Source code representing an expression generally comparable in structure to
-    /// mathematical notation in most C-like programming languages.
-    /// The most general grammar of the expression is as follows:
-    /// ```
-    /// Expr
-    ///    <- Identifier
-    ///     / INT_LITERAL
-    ///     / FLOAT_LITERAL
-    ///     / CHAR_LITERAL
-    ///     / GROUP
-    ///     / FIELD_ACCESS
-    ///     / INDEX_ACCESS
-    ///     / FUNC_CALL
-    ///     / UN_OP
-    ///     / BIN_OP
-    ///
-    /// GROUP <- LPAREN Expr RPAREN
-    /// FIELD_ACCESS <- Expr PERIOD Identifier
-    /// INDEX_ACCESS <- Expr LBRACKET Expr RBRACKET
-    /// FUNC_CALL <- Expr LPAREN (Expr COMMA)* RPAREN
-    /// UN_OP <- OPERATOR Expr
-    /// BIN_OP <- Expr OPERATOR Expr
-    ///
-    /// Identifier <- [A-Za-z_][A-Za-z_0-9]*
-    /// ```
     comptime expr: []const u8,
     ctx: anytype,
-    /// Should be a struct literal which assigns values to variable names appearing in the `expr`
     inputs: anytype,
 ) !Eval(expr, @TypeOf(ctx), @TypeOf(inputs)) {
     const Ctx = @TypeOf(ctx);

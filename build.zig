@@ -5,8 +5,8 @@ pub fn build(b: *Build) void {
     const util_mod = b.createModule(.{
         .source_file = Build.FileSource.relative("src/util.zig"),
     });
-    const eval_mod = b.addModule("eval", .{
-        .source_file = Build.FileSource.relative("src/eval.zig"),
+    const eval_mod = b.addModule("comath", .{
+        .source_file = Build.FileSource.relative("src/main.zig"),
         .dependencies = &.{
             .{ .name = "util", .module = util_mod },
         },
@@ -17,7 +17,7 @@ pub fn build(b: *Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const main_tests = b.addTest(.{
-        .root_source_file = Build.FileSource.relative("src/eval.zig"),
+        .root_source_file = Build.FileSource.relative("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });

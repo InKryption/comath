@@ -1,7 +1,7 @@
 const std = @import("std");
+const comath = @import("main.zig");
+const operator = comath.operator;
 const util = @import("util");
-const eval = @import("eval.zig");
-const operator = eval.operator;
 
 const SimpleUnOp = enum {
     @"-",
@@ -254,15 +254,15 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
 }
 
 test simpleCtx {
-    try util.testing.expectEqual(5, eval.eval("a + b", simpleCtx({}), .{ .a = 2, .b = 3 }));
-    try util.testing.expectEqual(1, eval.eval("a +% b", simpleCtx({}), .{ .a = @as(u8, std.math.maxInt(u8)), .b = 2 }));
-    try util.testing.expectEqual(59049, eval.eval("3^(2 * a + -b)", simpleCtx({}), .{ .a = 7, .b = 4 }));
+    try util.testing.expectEqual(5, comath.eval("a + b", simpleCtx({}), .{ .a = 2, .b = 3 }));
+    try util.testing.expectEqual(1, comath.eval("a +% b", simpleCtx({}), .{ .a = @as(u8, std.math.maxInt(u8)), .b = 2 }));
+    try util.testing.expectEqual(59049, comath.eval("3^(2 * a + -b)", simpleCtx({}), .{ .a = 7, .b = 4 }));
 
-    try util.testing.expectEqual([2][2]u16{ .{ 140, 320 }, .{ 146, 335 } }, eval.eval("a @ b", simpleCtx({}), .{
+    try util.testing.expectEqual([2][2]u16{ .{ 140, 320 }, .{ 146, 335 } }, comath.eval("a @ b", simpleCtx({}), .{
         .a = [3][2]u16{ .{ 1, 4 }, .{ 2, 5 }, .{ 3, 6 } },
         .b = [2][3]u16{ .{ 10, 20, 30 }, .{ 11, 21, 31 } },
     }));
-    try util.testing.expectEqual([2][2]u16{ .{ 188, 422 }, .{ 207, 468 } }, eval.eval("a @ b @ c", simpleCtx({}), .{
+    try util.testing.expectEqual([2][2]u16{ .{ 188, 422 }, .{ 207, 468 } }, comath.eval("a @ b @ c", simpleCtx({}), .{
         .a = [3][2]u16{ .{ 1, 4 }, .{ 2, 5 }, .{ 3, 6 } },
         .b = [2][3]u16{ .{ 1, 2, 4 }, .{ 2, 3, 6 } },
         .c = [2][2]u16{ .{ 8, 2 }, .{ 3, 6 } },
@@ -299,7 +299,7 @@ test simpleCtx {
             };
         }
     }{});
-    try util.testing.expectEqual(2, eval.eval("(++2 ^ 5) $ 36", op_override_ctx, .{}));
+    try util.testing.expectEqual(2, comath.eval("(++2 ^ 5) $ 36", op_override_ctx, .{}));
 }
 
 pub inline fn fnMethodCtx(
@@ -584,16 +584,16 @@ test fnMethodCtx {
         .@"*" = "mul",
         .evalFuncCall = "mul",
     });
-    try util.testing.expectEqual(CustomNum.from(2), eval.eval("a + -b - c", fm_ctx, .{
+    try util.testing.expectEqual(CustomNum.from(2), comath.eval("a + -b - c", fm_ctx, .{
         .a = @as(CustomNum, @enumFromInt(22)),
         .b = @as(CustomNum, @enumFromInt(9)),
         .c = @as(CustomNum, @enumFromInt(11)),
     }));
-    try util.testing.expectEqual(CustomNum.from(77), eval.eval("a(b) * 1", fm_ctx, .{
+    try util.testing.expectEqual(CustomNum.from(77), comath.eval("a(b) * 1", fm_ctx, .{
         .a = @as(CustomNum, @enumFromInt(11)),
         .b = @as(CustomNum, @enumFromInt(7)),
     }));
-    try util.testing.expectEqual(CustomNum.from(62), eval.eval("num(31)(2)", fm_ctx, .{
+    try util.testing.expectEqual(CustomNum.from(62), comath.eval("num(31)(2)", fm_ctx, .{
         .num = CustomNum.from,
     }));
 }

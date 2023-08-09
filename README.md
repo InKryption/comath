@@ -1,4 +1,4 @@
-# math-eval
+# comath: comptime math
 The main function this library provides is `eval`, which is of the form
 ```zig
 fn eval(
@@ -59,11 +59,11 @@ Some built-in contexts are provided in the `contexts` namespace, both for use an
 Example code:
 ```zig
 const std = @import("std");
-const eval = @import("eval");
+const comath = @import("comath");
 
 test {
-    const ctx = eval.contexts.simpleCtx({});
-    const value = eval.eval("a * 2", ctx, .{ .a = 4 }) catch |err| switch (err) {};
+    const ctx = comath.contexts.simpleCtx({});
+    const value = comath.eval("a * 2", ctx, .{ .a = 4 }) catch |err| switch (err) {};
     try std.testing.expect(value == 8);
 }
 ```
