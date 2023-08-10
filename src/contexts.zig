@@ -534,15 +534,15 @@ fn DedupedMethodNames(comptime method_names: anytype) type {
         };
         const old_value: T = @as(*align(1) const old.type, @ptrCast(old.default_value)).*;
         new.* = .{
-            .name = util.dedupeSlice(u8, old.name),
+            .name = util.dedupe.scalarSlice(u8, old.name[0..].*),
             .type = T,
             .is_comptime = true,
-            .default_value = @ptrCast(util.dedupeValue(old_value)),
+            .default_value = @ptrCast(util.dedupe.scalarValue(old_value)),
             .alignment = 0,
         };
     }
 
-    const deduped_fields = util.dedupeSlice(std.builtin.Type.StructField, &fields);
+    const deduped_fields = util.dedupe.scalarSlice(std.builtin.Type.StructField, fields);
     return DedupedMethodNamesImpl(deduped_fields);
 }
 fn DedupedMethodNamesImpl(comptime fields: []const std.builtin.Type.StructField) type {

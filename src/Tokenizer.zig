@@ -49,7 +49,7 @@ pub inline fn next(
     comptime buffer: []const u8,
 ) Token {
     comptime {
-        const result = tokenizer.peekImpl(util.dedupeSlice(u8, buffer));
+        const result = tokenizer.peekImpl(util.dedupe.scalarSlice(u8, buffer[0..].*));
         tokenizer.* = result.state;
         return result.token;
     }
@@ -60,7 +60,7 @@ pub inline fn nextOp(
     comptime OpEnum: type,
 ) OpEnum {
     comptime {
-        const result = tokenizer.peekOpImpl(util.dedupeSlice(u8, buffer), OpEnum);
+        const result = tokenizer.peekOpImpl(util.dedupe.scalarSlice(u8, buffer[0..].*), OpEnum);
         tokenizer.* = result.state;
         return @field(OpEnum, result.op[0..]);
     }
@@ -105,7 +105,7 @@ fn peekOpImpl(
     comptime {
         const start = tokenizer.index;
         const end = tokenizer.op_symbols_end orelse @compileError("Must only call after encountering `.op_symbols`");
-        const op = tokenizeOpEnumFrom(OpEnum, util.dedupeSlice(u8, buffer[start..end]));
+        const op = tokenizeOpEnumFrom(OpEnum, util.dedupe.scalarSlice(u8, buffer[start..end].*));
         const new_index = tokenizer.index + op.len;
         return .{
             .op = op,
@@ -120,7 +120,7 @@ fn tokenizeOpEnumFrom(comptime OpEnum: type, comptime buffer: []const u8) []cons
     comptime {
         var end = buffer.len;
         while (end != 0 and !@hasField(OpEnum, buffer[0..end])) : (end -= 1) {}
-        if (end != 0) return util.dedupeSlice(u8, buffer[0..end]);
+        if (end != 0) return util.dedupe.scalarSlice(u8, buffer[0..end].*);
         @compileError("Unrecognized operator '" ++ buffer ++ "'");
     }
 }

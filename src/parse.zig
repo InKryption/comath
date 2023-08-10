@@ -32,7 +32,7 @@ pub fn parseExpr(
             const i = util.indexOfNoneComptime(u8, field.name, Tokenizer.operator_characters) orelse continue;
             const list = list: {
                 var str: []const u8 = "";
-                for (Tokenizer.operator_symbols) |sym|
+                for (Tokenizer.operator_characters) |sym|
                     str = str ++ std.fmt.comptimePrint(" * '{c}'\n", .{sym});
                 break :list str;
             };
@@ -43,7 +43,7 @@ pub fn parseExpr(
             , .{ field.name[i], field.name, list }));
         }
 
-        const deduped_expr = util.dedupeSlice(u8, expr);
+        const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);
         const res = parseExprImpl(deduped_expr, .none, .{}, UnOpEnum, BinOpEnum, relations);
         return res.result;
     }
@@ -244,11 +244,11 @@ fn parseExprImpl(
             .op_symbols => {
                 if (can_be_unary) {
                     const op = tokenizer.nextOp(expr, UnOpEnum);
-                    result = result.concatUnOp(util.dedupeSlice(u8, @tagName(op)));
+                    result = result.concatUnOp(util.dedupe.scalarSlice(u8, @tagName(op)[0..].*));
                 } else {
                     can_be_unary = true;
                     const op = tokenizer.nextOp(expr, BinOpEnum);
-                    result = result.concatBinOp(util.dedupeSlice(u8, @tagName(op)), relations);
+                    result = result.concatBinOp(util.dedupe.scalarSlice(u8, @tagName(op)[0..].*), relations);
                 }
             },
             inline .paren_open, .bracket_open => |_, tag| {
@@ -268,7 +268,7 @@ fn parseExprImpl(
                     }
                     if (!update.ends_with_comma) break;
                 }
-                result = result.concatFunctionArgsOrJustGroup(inner_nest_type, util.dedupeSlice(ExprNode, args));
+                result = result.concatFunctionArgsOrJustGroup(inner_nest_type, util.dedupe.scalarSlice(ExprNode, args[0..].*));
             },
             .comma => {
                 can_be_unary = undefined;
@@ -350,7 +350,7 @@ pub const ExprNode = union(enum) {
     ) ExprNode {
         return switch (base) {
             .null => ExprNode{ .un_op = &.{
-                .op = util.dedupeSlice(u8, op),
+                .op = util.dedupe.scalarSlice(u8, op[0..].*),
                 .val = .null,
             } },
             .func_call => @compileError("TODO: handle"),
@@ -390,7 +390,7 @@ pub const ExprNode = union(enum) {
             .func_call,
             => .{ .bin_op = &.{
                 .lhs = base,
-                .op = util.dedupeSlice(u8, op),
+                .op = util.dedupe.scalarSlice(u8, op[0..].*),
                 .rhs = .null,
             } },
 
@@ -407,7 +407,7 @@ pub const ExprNode = union(enum) {
                 .func_call,
                 => .{ .bin_op = &.{
                     .lhs = base,
-                    .op = util.dedupeSlice(u8, op),
+                    .op = util.dedupe.scalarSlice(u8, op[0..].*),
                     .rhs = .null,
                 } },
 
@@ -439,14 +439,14 @@ pub const ExprNode = union(enum) {
                             .op = bin.op,
                             .rhs = .{ .bin_op = &.{
                                 .lhs = bin.rhs,
-                                .op = util.dedupeSlice(u8, op),
+                                .op = util.dedupe.scalarSlice(u8, op[0..].*),
                                 .rhs = .null,
                             } },
                         } };
                     }
                     break :blk .{ .bin_op = &.{
                         .lhs = base,
-                        .op = util.dedupeSlice(u8, op),
+                        .op = util.dedupe.scalarSlice(u8, op[0..].*),
                         .rhs = .null,
                     } };
                 },
@@ -548,7 +548,7 @@ pub const ExprNode = union(enum) {
             .group,
             => .{ .field_access = &.{
                 .accessed = base,
-                .accessor = util.dedupeSlice(u8, field),
+                .accessor = util.dedupe.scalarSlice(u8, field[0..].*),
             } },
             .func_call => @compileError("TODO: handle"),
             .bin_op => |bin| .{ .bin_op = &.{
@@ -624,7 +624,7 @@ pub const ExprNode = union(enum) {
                 .null => return .{
                     .op = un.op,
                     .val = .{ .un_op = &.{
-                        .op = util.dedupeSlice(u8, op),
+                        .op = util.dedupe.scalarSlice(u8, op[0..].*),
                         .val = .null,
                     } },
                 },

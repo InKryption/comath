@@ -92,8 +92,8 @@ pub inline fn eval(
     const Inputs = @TypeOf(inputs);
     const allow_unused_inputs: bool = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
     comptime if (!allow_unused_inputs and @typeInfo(Inputs).Struct.fields.len != 0) {
-        const InputTag = util.DedupedEnum(std.meta.FieldEnum(Inputs));
-        const deduped_expr = util.dedupeSlice(u8, expr);
+        const InputTag = util.dedupe.Enum(std.meta.FieldEnum(Inputs));
+        const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);
         analyzeUnusedInputs(deduped_expr, InputTag) catch |err| @compileError(@errorName(err));
     };
     const root = comptime parse.parseExpr(expr, Ns.UnOp, Ns.BinOp, Ns.relations);
@@ -163,7 +163,7 @@ fn EvalImpl(
         .group => |group| EvalImpl(group.*, Ctx, Inputs),
         .field_access => |fa| blk: {
             const Lhs = EvalImpl(fa.accessed, Ctx, Inputs);
-            break :blk EvalProperty(Lhs, util.dedupeSlice(u8, fa.accessor));
+            break :blk EvalProperty(Lhs, util.dedupe.scalarSlice(u8, fa.accessor[0..].*));
         },
         .index_access => |ia| blk: {
             const Lhs = EvalImpl(ia.accessed, Ctx, Inputs);
@@ -253,7 +253,7 @@ inline fn evalImpl(
         .field_access => |fa| blk: {
             const Lhs = EvalImpl(fa.accessed, Ctx, Inputs);
             const lhs: Lhs = try evalImpl(fa.accessed, ctx, inputs);
-            break :blk ctx.evalProperty(lhs, util.dedupeSlice(u8, fa.accessor));
+            break :blk ctx.evalProperty(lhs, util.dedupe.scalarSlice(u8, fa.accessor[0..].*));
         },
         .index_access => |ia| blk: {
             const Lhs = EvalImpl(ia.accessed, Ctx, Inputs);

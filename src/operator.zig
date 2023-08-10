@@ -14,7 +14,7 @@ pub const Relation = struct {
 };
 
 pub fn RelationMap(comptime BinOpEnum: type) type {
-    return std.enums.EnumFieldStruct(util.DedupedEnum(BinOpEnum), ?Relation, @as(?Relation, null));
+    return std.enums.EnumFieldStruct(util.dedupe.Enum(BinOpEnum), ?Relation, @as(?Relation, null));
 }
 
 pub inline fn relation(

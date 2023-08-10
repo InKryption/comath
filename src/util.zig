@@ -3,79 +3,6 @@ const assert = std.debug.assert;
 
 const util = @This();
 
-pub const testing = struct {
-    pub inline fn expectEqual(a: anytype, b: anytype) !void {
-        const T = @TypeOf(a, b);
-        return std.testing.expectEqual(@as(T, a), @as(T, b));
-    }
-    pub inline fn expectEqualDeep(a: anytype, b: anytype) !void {
-        const T = @TypeOf(a, b);
-        return std.testing.expectEqualDeep(@as(T, a), @as(T, b));
-    }
-};
-
-pub inline fn dedupeEnum(value: anytype) DedupedEnum(@TypeOf(value)) {
-    const T = @TypeOf(value);
-    const Deduped = DedupedEnum(T);
-    inline for (@typeInfo(T).Enum.fields) |field| {
-        const tag = @field(T, field.name);
-        if (tag == value) return @field(Deduped, field.name);
-    }
-}
-pub fn DedupedEnum(comptime E: type) type {
-    const info = @typeInfo(E).Enum;
-    comptime var fields: [info.fields.len]std.builtin.Type.EnumField = info.fields[0..].*;
-    for (&fields, 0..) |*field, i| field.* = .{
-        .name = util.dedupeSlice(u8, field.name),
-        .value = i,
-    };
-    if (fields.len == 0) return DedupedEnumImpl(fields.len, fields);
-    std.sort.insertionContext(0, fields.len, struct {
-        pub fn swap(a: usize, b: usize) void {
-            std.mem.swap([]const u8, &fields[a].name, &fields[b].name);
-        }
-        pub fn lessThan(a: usize, b: usize) bool {
-            return util.orderComptime(u8, fields[a].name, fields[b].name) == .lt;
-        }
-    });
-    return DedupedEnumImpl(fields.len, fields);
-}
-fn DedupedEnumImpl(
-    comptime field_count: comptime_int,
-    comptime fields: [field_count]std.builtin.Type.EnumField,
-) type {
-    return @Type(.{ .Enum = .{
-        .tag_type = std.math.IntFittingRange(0, fields.len -| 1),
-        .is_exhaustive = true,
-        .decls = &.{},
-        .fields = &fields,
-    } });
-}
-pub inline fn eqlComptime(comptime T: type, comptime a: []const T, comptime b: []const T) bool {
-    comptime return @reduce(.And, vec(T, a[0..].*) == vec(T, b[0..].*));
-}
-pub inline fn indexOfDiffComptime(comptime T: type, comptime a: []const T, comptime b: []const T) ?comptime_int {
-    const shortest = @min(a.len, b.len);
-    const eqls_vec = vec(T, a[0..shortest].*) != vec(T, b[0..shortest].*);
-    return std.simd.firstTrue(eqls_vec) orelse
-        if (a.len == b.len) null else shortest;
-}
-
-pub inline fn orderComptime(comptime T: type, comptime a: []const T, comptime b: []const T) std.math.Order {
-    comptime {
-        const diff = indexOfDiffComptime(T, a, b) orelse return .eq;
-        if (a.len != b.len) switch (diff) {
-            a.len => return .lt,
-            b.len => return .gt,
-            else => {},
-        };
-        return std.math.order(a[diff], b[diff]);
-    }
-}
-
-pub inline fn vec(comptime T: type, init: anytype) @Vector(init.len, T) {
-    return init[0..].*;
-}
 pub inline fn simdOr(a: anytype, b: anytype) @Vector(@typeInfo(@TypeOf(a, b)).Vector.len, bool) {
     const T = @TypeOf(a, b);
     const len = @typeInfo(T).Vector.len;
@@ -91,6 +18,129 @@ pub inline fn simdAnd(a: anytype, b: anytype) @Vector(@typeInfo(@TypeOf(a, b)).V
     return @bitCast(a_bits & b_bits);
 }
 
+pub const testing = struct {
+    pub inline fn expectEqual(a: anytype, b: anytype) !void {
+        const T = @TypeOf(a, b);
+        return std.testing.expectEqual(@as(T, a), @as(T, b));
+    }
+    pub inline fn expectEqualDeep(a: anytype, b: anytype) !void {
+        const T = @TypeOf(a, b);
+        return std.testing.expectEqualDeep(@as(T, a), @as(T, b));
+    }
+};
+
+pub const dedupe = struct {
+    pub inline fn scalarValue(comptime value: anytype) *const @TypeOf(value) {
+        return &value;
+    }
+
+    pub inline fn scalarSlice(
+        comptime T: type,
+        comptime array: anytype,
+    ) *const [array.len]T {
+        return &array;
+    }
+
+    pub inline fn sliceSlice(
+        comptime T: type,
+        comptime slices: []const []const T,
+    ) *const [slices.len][]const T {
+        comptime {
+            var deduped = slices[0..].*;
+            for (&deduped) |*slice| slice.* = scalarSlice(T, slice.*);
+            return scalarSlice([]const T, &deduped);
+        }
+    }
+
+    pub inline fn enumValue(value: anytype) Enum(@TypeOf(value)) {
+        const T = @TypeOf(value);
+        const Deduped = Enum(T);
+        if (@inComptime()) return @field(Deduped, @tagName(value));
+        if (@typeInfo(T).Enum.is_exhaustive) return switch (value) {
+            inline else => |tag| comptime @field(Deduped, @tagName(tag)),
+        };
+        inline for (@typeInfo(T).Enum.fields) |field| {
+            const tag = @field(T, field.name);
+            if (tag == value) return @field(Deduped, field.name);
+        }
+        unreachable;
+    }
+    pub const Enum = struct {
+        fn Enum(comptime E: type) type {
+            const info = @typeInfo(E).Enum;
+            comptime var fields: [info.fields.len]std.builtin.Type.EnumField = info.fields[0..].*;
+            for (&fields, 0..) |*field, i| field.* = .{
+                .name = util.dedupe.scalarSlice(u8, field.name[0..].*),
+                .value = i,
+            };
+            if (fields.len == 0) return EnumImpl(fields.len, fields);
+            std.sort.insertionContext(0, fields.len, struct {
+                pub fn swap(a: usize, b: usize) void {
+                    std.mem.swap([]const u8, &fields[a].name, &fields[b].name);
+                }
+                pub fn lessThan(a: usize, b: usize) bool {
+                    return util.orderComptime(u8, fields[a].name, fields[b].name) == .lt;
+                }
+            });
+            return EnumImpl(fields.len, fields);
+        }
+        fn EnumImpl(
+            comptime field_count: comptime_int,
+            comptime fields: [field_count]std.builtin.Type.EnumField,
+        ) type {
+            return @Type(.{ .Enum = .{
+                .tag_type = std.math.IntFittingRange(0, fields.len -| 1),
+                .is_exhaustive = true,
+                .decls = &.{},
+                .fields = &fields,
+            } });
+        }
+    }.Enum;
+};
+
+pub inline fn eqlComptime(comptime T: type, comptime a: []const T, comptime b: []const T) bool {
+    if (a.len != b.len) return false;
+    const len = a.len;
+    const V = @Vector(len, T);
+    comptime return @reduce(.And, @as(V, a[0..].*) == @as(V, b[0..].*));
+}
+pub inline fn indexOfDiffComptime(comptime T: type, comptime a: []const T, comptime b: []const T) ?comptime_int {
+    const shortest = @min(a.len, b.len);
+    const V = @Vector(shortest, T);
+    const neqls_vec = @as(V, a[0..shortest].*) != @as(V, b[0..shortest].*);
+    const mask: std.meta.Int(.unsigned, shortest) = @bitCast(neqls_vec);
+    const idx = @clz(mask);
+    if (idx == shortest) {
+        if (a.len == b.len) return null;
+        return shortest;
+    }
+    return idx;
+}
+
+pub inline fn orderComptime(comptime T: type, comptime a: []const T, comptime b: []const T) std.math.Order {
+    const diff = comptime indexOfDiffComptime(T, a, b) orelse return .eq;
+    comptime if (a.len != b.len) switch (diff) {
+        a.len => return .lt,
+        b.len => return .gt,
+        else => {},
+    };
+    return if (a[diff] < b[diff]) .lt else .gt;
+}
+
+pub inline fn replaceScalarComptime(
+    comptime T: type,
+    comptime input: []const T,
+    comptime needle: T,
+    comptime replacement: T,
+) [input.len]T {
+    comptime {
+        const needle_vec: @Vector(input.len, T) = @splat(needle);
+        const replacement_vec: @Vector(input.len, T) = @splat(replacement);
+        const matches = input[0..].* == needle_vec;
+        return @select(T, matches, replacement_vec, input[0..].*);
+    }
+}
+
 /// Parse digits with the given base into a comptime_int.
 /// Optimised to use a linear but low amount of eval branch quota
 pub const parseComptimeInt = struct {
@@ -98,14 +148,14 @@ pub const parseComptimeInt = struct {
         comptime str: []const u8,
         comptime base: u8,
     ) error{ InvalidCharacter, EmptyString }!comptime_int {
-        return parseComptimeIntImpl(dedupeSlice(u8, str), base);
+        return parseComptimeIntImpl(dedupe.scalarSlice(u8, str), base);
     }
     fn parseComptimeIntImpl(
         comptime str: []const u8,
         comptime base: u8,
     ) error{InvalidCharacter}!comptime_int {
-        const str_vec = vec(u8, str[0..].*);
-        const StrVec = @TypeOf(str_vec);
+        const StrVec = @Vector(str.len, u8);
+        const str_vec: StrVec = str[0..].*;
 
         // const underscore_eqls = str_vec == @as(StrVec, @splat('_'));
         const underscore_eqls = str_vec == .{'_'} ** str.len;
@@ -161,8 +211,8 @@ pub const indexOfNoneComptime = struct {
         comptime haystack: []const T,
         comptime excluded: []const T,
     ) ?comptime_int {
-        const dd_hs = dedupeSlice(T, haystack);
-        const dd_ex = dedupeSlice(T, excluded);
+        const dd_hs = dedupe.scalarSlice(T, haystack[0..].*);
+        const dd_ex = dedupe.scalarSlice(T, excluded[0..].*);
         return indexOfNoneComptimeImpl(T, dd_hs, dd_ex);
     }
     fn indexOfNoneComptimeImpl(
@@ -180,44 +230,16 @@ pub const indexOfNoneComptime = struct {
         for (excluded) |ex| {
             const ex_vec: @Vector(arr.len, T) = @splat(ex);
             // const prev: @Vector(arr.len, u1) = @bitCast(trues);
-            const current = vec(T, arr) != ex_vec;
+            const current = arr != ex_vec;
             // trues = @bitCast(prev & current);
             trues = simdAnd(trues, current);
         }
 
-        return std.simd.firstTrue(trues) orelse null;
+        const mask: std.meta.Int(.unsigned, arr.len) = @bitCast(trues);
+        const idx = @ctz(mask);
+        return if (idx == haystack.len) null else idx;
     }
 }.indexOfNoneComptime;
-
-pub const dedupeSlice = struct {
-    inline fn dedupeSlice(
-        comptime T: type,
-        comptime slice: []const T,
-    ) *const [slice.len]T {
-        comptime return dedupeSliceImpl(T, slice[0..].*);
-    }
-    fn dedupeSliceImpl(
-        comptime T: type,
-        comptime array: anytype,
-    ) *const [array.len]T {
-        comptime return &array;
-    }
-}.dedupeSlice;
-
-pub inline fn dedupeValue(comptime value: anytype) *const @TypeOf(value) {
-    return &value;
-}
-
-pub inline fn dedupeSlices(
-    comptime T: type,
-    comptime slices: []const []const T,
-) *const [slices.len][]const T {
-    comptime {
-        var deduped = slices[0..].*;
-        for (&deduped) |*slice| slice.* = dedupeSlice(T, slice.*);
-        return dedupeSlice([]const T, &deduped);
-    }
-}
 
 pub inline fn implicitDeref(ptr_or_val: anytype) ImplicitDeref(@TypeOf(ptr_or_val)) {
     return switch (@typeInfo(@TypeOf(ptr_or_val))) {
