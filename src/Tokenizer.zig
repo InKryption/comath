@@ -42,6 +42,33 @@ pub const Token = union(enum) {
     bracket_close,
 };
 
+pub inline fn fullTokenize(comptime buffer: []const u8) []const Token {
+    comptime {
+        var normalized: []const u8 = &util.replaceAnyWithScalarComptime(
+            u8,
+            util.dedupe.scalarSlice(u8, buffer[0..].*),
+            util.dedupe.scalarSlice(u8, std.ascii.whitespace),
+            ' ',
+        );
+        normalized = util.trimScalarComptime(u8, normalized, ' ', .both);
+        return util.dedupe.scalarSlice(Token, fullTokenizeImpl(normalized)[0..].*);
+    }
+}
+
+fn fullTokenizeImpl(comptime buffer: []const u8) []const Token {
+    var result: []const Token = &.{};
+
+    @setEvalBranchQuota(buffer.len + buffer.len / 2);
+    var tokenizer = Tokenizer{};
+    while (true) {
+        const tok = tokenizer.next(buffer);
+        if (tok == .eof) break;
+        result = result ++ &[_]Token{tok};
+    }
+
+    return result;
+}
+
 pub inline fn next(
     comptime tokenizer: *Tokenizer,
     comptime buffer: []const u8,
@@ -91,7 +118,7 @@ fn peekImpl(
         => {
             const start = tokenizer.index;
             const end = util.indexOfNonePosComptime(u8, buffer, start + 1, identifier_characters) orelse buffer.len;
-            const ident = buffer[start..end];
+            const ident = util.dedupe.scalarSlice(u8, buffer[start..end].*);
             return .{
                 .state = .{ .index = end },
                 .token = .{ .ident = ident },
@@ -100,7 +127,7 @@ fn peekImpl(
         '.' => {
             const start = tokenizer.index + 1;
             const end = util.indexOfNonePosComptime(u8, buffer, start + 1, identifier_characters ++ operator_characters) orelse buffer.len;
-            const ident = buffer[start..end];
+            const ident = util.dedupe.scalarSlice(u8, buffer[start..end].*);
             if (ident.len == 0) @compileError("Expected identifier following period");
             return .{
                 .state = .{ .index = end },
@@ -113,7 +140,7 @@ fn peekImpl(
             var zig_tokenizer = std.zig.Tokenizer.init(buffer[idx..] ++ &[_:0]u8{});
             const tok = zig_tokenizer.next();
 
-            const literal_src = buffer[idx..][tok.loc.start..tok.loc.end];
+            const literal_src = util.dedupe.scalarSlice(u8, buffer[idx..][tok.loc.start..tok.loc.end].*);
             idx += literal_src.len;
 
             @setEvalBranchQuota(@min(std.math.maxInt(u32), buffer.len - idx));

@@ -127,6 +127,45 @@ pub inline fn orderComptime(comptime T: type, comptime a: []const T, comptime b:
     return if (a[diff] < b[diff]) .lt else .gt;
 }
 
+pub inline fn trimScalarComptime(
+    comptime T: type,
+    comptime input: []const T,
+    comptime needle: T,
+    comptime sides: enum { left, both, right },
+) []const T {
+    comptime {
+        const needle_vec: @Vector(input.len, T) = @splat(needle);
+        const matches = needle_vec != input[0..].*;
+        const mask: std.meta.Int(.unsigned, input.len) = @bitCast(matches);
+        const start = switch (sides) {
+            .left, .both => @ctz(mask),
+            .right => 0,
+        };
+        const end = switch (sides) {
+            .right, .both => input.len - @clz(mask),
+            .left => input.len,
+        };
+        return input[start..end];
+    }
+}
+
+pub inline fn replaceAnyWithScalarComptime(
+    comptime T: type,
+    comptime input: []const T,
+    comptime needles: []const T,
+    comptime replacement: T,
+) [input.len]T {
+    comptime {
+        @setEvalBranchQuota(needles.len * 2 + 1);
+        var matches: @Vector(input.len, bool) = .{false} ** input.len;
+        for (needles) |needle| {
+            const needle_vec: @Vector(input.len, T) = @splat(needle);
+            matches = simdOr(matches, needle_vec == input[0..].*);
+        }
+        const replacement_vec: @Vector(input.len, T) = @splat(replacement);
+        return @select(T, matches, replacement_vec, input[0..].*);
+    }
+}
 pub inline fn replaceScalarComptime(
     comptime T: type,
     comptime input: []const T,
@@ -140,60 +179,6 @@ pub inline fn replaceScalarComptime(
         return @select(T, matches, replacement_vec, input[0..].*);
     }
 }
-
-/// Parse digits with the given base into a comptime_int.
-/// Optimised to use a linear but low amount of eval branch quota
-pub const parseComptimeInt = struct {
-    fn parseComptimeInt(
-        comptime str: []const u8,
-        comptime base: u8,
-    ) error{ InvalidCharacter, EmptyString }!comptime_int {
-        return parseComptimeIntImpl(dedupe.scalarSlice(u8, str), base);
-    }
-    fn parseComptimeIntImpl(
-        comptime str: []const u8,
-        comptime base: u8,
-    ) error{InvalidCharacter}!comptime_int {
-        const StrVec = @Vector(str.len, u8);
-        const str_vec: StrVec = str[0..].*;
-
-        // const underscore_eqls = str_vec == @as(StrVec, @splat('_'));
-        const underscore_eqls = str_vec == .{'_'} ** str.len;
-        const digit_eqls = simdAnd(str_vec >= @as(StrVec, @splat('0')), str_vec <= @as(StrVec, @splat('9')));
-        const lower_alpha_eqls = simdAnd(str_vec >= @as(StrVec, @splat('a')), str_vec <= @as(StrVec, @splat('z')));
-        const upper_alpha_eqls = simdAnd(str_vec >= @as(StrVec, @splat('A')), str_vec <= @as(StrVec, @splat('Z')));
-        const ints = str_vec -
-            @select(u8, digit_eqls, @as(StrVec, @splat('0')), @as(StrVec, @splat(0))) -
-            @select(u8, lower_alpha_eqls, @as(StrVec, @splat('a' + 10)), @as(StrVec, @splat(0))) -
-            @select(u8, upper_alpha_eqls, @as(StrVec, @splat('A' + 10)), @as(StrVec, @splat(0)));
-        if (!@reduce(.And, simdAnd(
-            simdOr(
-                ints < @as(StrVec, @splat(base)),
-                underscore_eqls,
-            ),
-            simdOr(
-                simdOr(digit_eqls, underscore_eqls),
-                simdOr(lower_alpha_eqls, upper_alpha_eqls),
-            ),
-        ))) return error.InvalidCharacter;
-
-        const MapSubEntry = struct { sub: u8, base: u8 };
-        var digit_map_sub: [255]MapSubEntry = .{MapSubEntry{ .sub = undefined, .base = 0 }};
-        digit_map_sub['0' .. '9' + 1].* = .{.{ .base = base, .sub = '0' + 0 }} ** ('9' + 1 - '0');
-        digit_map_sub['a' .. 'z' + 1].* = .{.{ .base = base, .sub = 'a' + 10 }} ** ('z' + 1 - 'a');
-        digit_map_sub['A' .. 'Z' + 1].* = .{.{ .base = base, .sub = 'A' + 10 }} ** ('Z' + 1 - 'A');
-
-        @setEvalBranchQuota(@min(std.math.maxInt(u32), str.len + 1));
-        var x = 0;
-        for (str) |c| {
-            const dms = digit_map_sub[c];
-            const value = c - dms.sub;
-            x *= dms.base;
-            x += value;
-        }
-        return x;
-    }
-}.parseComptimeInt;
 
 pub inline fn indexOfNonePosComptime(
     comptime T: type,

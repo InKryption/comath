@@ -163,6 +163,7 @@ fn EvalImpl(
     };
     return switch (expr) {
         .null => @compileError("Incomplete AST (encountered null expression)"),
+        .err => noreturn,
         .ident => |ident| std.meta.FieldType(Inputs, @field(std.meta.FieldEnum(Inputs), ident)),
         .integer => comptime_int,
         .char => Char,
@@ -257,6 +258,8 @@ inline fn evalImpl(
     const Inputs = @TypeOf(inputs);
     return switch (comptime expr) {
         .null => @compileError("Incomplete AST (encountered null expression)"),
+        .err => |err| @compileError(err),
+
         .ident => |ident| @field(inputs, ident),
         .integer => |int| int,
         .char => |char| char,
