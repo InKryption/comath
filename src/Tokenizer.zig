@@ -5,7 +5,6 @@ const util = @import("util");
 
 const Tokenizer = @This();
 index: comptime_int = 0,
-op_symbols_end: ?comptime_int = null,
 
 pub const operator_characters: []const u8 = &[_]u8{
     '!', '#', '$', '%', '&', '*',
@@ -29,8 +28,7 @@ pub const Token = union(enum) {
     char: comptime_int,
     float: []const u8,
 
-    /// Must call `nextOp` in order to advance
-    op_symbols,
+    op_symbols: []const u8,
 
     /// ','
     comma,
@@ -54,75 +52,13 @@ pub inline fn next(
         return result.token;
     }
 }
-pub inline fn nextOp(
-    comptime tokenizer: *Tokenizer,
-    comptime buffer: []const u8,
-    comptime OpEnum: type,
-) OpEnum {
-    comptime {
-        const result = tokenizer.peekOpImpl(util.dedupe.scalarSlice(u8, buffer[0..].*), OpEnum);
-        tokenizer.* = result.state;
-        return @field(OpEnum, result.op[0..]);
-    }
-}
 
 pub inline fn peek(
     comptime tokenizer: Tokenizer,
     comptime buffer: []const u8,
-) ?Token {
-    const result = tokenizer.peekImpl(util.dedupeSlice(u8, buffer));
+) Token {
+    const result = tokenizer.peekImpl(util.dedupe.scalarSlice(u8, buffer[0..].*));
     return result.token;
-}
-pub inline fn peekOp(
-    comptime tokenizer: Tokenizer,
-    comptime buffer: []const u8,
-    comptime OpEnum: type,
-) OpEnum {
-    comptime {
-        const result = tokenizer.peekOpImpl(util.dedupeSlice(u8, buffer), OpEnum);
-        return result.op;
-    }
-}
-
-pub inline fn skipOps(
-    comptime tokenizer: *Tokenizer,
-) bool {
-    const skipped = tokenizer.op_symbols_end != null;
-    if (tokenizer.op_symbols_end) |end| tokenizer.index = end;
-    tokenizer.op_symbols_end = null;
-    return skipped;
-}
-
-const PeekOpRes = struct {
-    op: []const u8,
-    state: Tokenizer,
-};
-fn peekOpImpl(
-    comptime tokenizer: Tokenizer,
-    comptime buffer: []const u8,
-    comptime OpEnum: type,
-) PeekOpRes {
-    comptime {
-        const start = tokenizer.index;
-        const end = tokenizer.op_symbols_end orelse @compileError("Must only call after encountering `.op_symbols`");
-        const op = tokenizeOpEnumFrom(OpEnum, util.dedupe.scalarSlice(u8, buffer[start..end].*));
-        const new_index = tokenizer.index + op.len;
-        return .{
-            .op = op,
-            .state = .{
-                .index = new_index,
-                .op_symbols_end = if (new_index != end) end else null,
-            },
-        };
-    }
-}
-fn tokenizeOpEnumFrom(comptime OpEnum: type, comptime buffer: []const u8) []const u8 {
-    comptime {
-        var end = buffer.len;
-        while (end != 0 and !@hasField(OpEnum, buffer[0..end])) : (end -= 1) {}
-        if (end != 0) return util.dedupe.scalarSlice(u8, buffer[0..end].*);
-        @compileError("Unrecognized operator '" ++ buffer ++ "'");
-    }
 }
 
 const PeekRes = struct {
@@ -133,10 +69,6 @@ fn peekImpl(
     comptime tokenizer: Tokenizer,
     comptime buffer: []const u8,
 ) PeekRes {
-    if (tokenizer.op_symbols_end != null) return .{
-        .token = .op_symbols,
-        .state = tokenizer,
-    };
     switch ((buffer ++ &[_:0]u8{})[tokenizer.index]) {
         0 => return .{
             .state = tokenizer,
@@ -210,11 +142,11 @@ fn peekImpl(
         },
         else => |first_byte| {
             const start = tokenizer.index;
-            const end = util.indexOfNonePosComptime(u8, buffer, start, operator_characters) orelse buffer.len;
+            const end = util.indexOfNonePosComptime(u8, buffer, start + 1, operator_characters) orelse buffer.len;
             if (start == end) @compileError("Unexpected byte '" ++ &[_]u8{first_byte} ++ "'");
             return .{
-                .state = .{ .index = start, .op_symbols_end = end },
-                .token = .op_symbols,
+                .state = .{ .index = end },
+                .token = .{ .op_symbols = util.dedupe.scalarSlice(u8, buffer[start..end].*) },
             };
         },
     }
@@ -223,19 +155,12 @@ fn peekImpl(
 
 fn testTokenizer(
     comptime buffer: []const u8,
-    comptime OpEnum: type,
-    comptime expected: anytype,
+    comptime expected: []const Token,
 ) !void {
     comptime var tokenizer = Tokenizer{};
-    inline for (expected) |tok| {
-        if ((@TypeOf(tok) == @TypeOf(.enum_literal) or
-            @TypeOf(tok) == OpEnum) and @hasField(OpEnum, @tagName(tok)))
-        {
-            try util.testing.expectEqualDeep(Token{ .op_symbols = {} }, tokenizer.next(buffer));
-            try util.testing.expectEqual(@as(OpEnum, tok), tokenizer.nextOp(buffer, OpEnum));
-        } else {
-            try util.testing.expectEqualDeep(@as(Token, tok), tokenizer.next(buffer));
-        }
+    inline for (expected) |expected_tok| {
+        const actual_tok = tokenizer.next(buffer);
+        try util.testing.expectEqualDeep(expected_tok, actual_tok);
     }
     try util.testing.expectEqualDeep(.eof, tokenizer.next(buffer));
     try util.testing.expectEqualDeep(.eof, tokenizer.next(buffer));
@@ -249,85 +174,41 @@ test Tokenizer {
         \\^      ]      |     a_b_C   %
         \\.foo   .b@r   .?
     ,
-        enum { @"~", @"+", @"-", @"!", @"*", @"^", @"|", @"%", @"/" },
-        .{
-            .@"~",               .{ .float = "3.0" },      .@"+",                 .{ .integer = 3 },       .@"-",
-            .@"-",               .@"!",                    .{ .paren_open = {} }, .{ .char = 'a' },        .{ .bracket_close = {} },
-            .@"*",               .{ .paren_close = {} },   .@"/",                 .{ .bracket_open = {} }, .{ .bracket_close = {} },
-            .@"^",               .{ .bracket_close = {} }, .@"|",                 .{ .ident = "a_b_C" },   .@"%",
-            .{ .field = "foo" }, .{ .field = "b@r" },      .{ .field = "?" },
+        &.{
+            .{ .op_symbols = "~" }, .{ .float = "3.0" },      .{ .op_symbols = "+" }, .{ .integer = 3 },       .{ .op_symbols = "-" },
+            .{ .op_symbols = "-" }, .{ .op_symbols = "!" },   .{ .paren_open = {} },  .{ .char = 'a' },        .{ .bracket_close = {} },
+            .{ .op_symbols = "*" }, .{ .paren_close = {} },   .{ .op_symbols = "/" }, .{ .bracket_open = {} }, .{ .bracket_close = {} },
+            .{ .op_symbols = "^" }, .{ .bracket_close = {} }, .{ .op_symbols = "|" }, .{ .ident = "a_b_C" },   .{ .op_symbols = "%" },
+            .{ .field = "foo" },    .{ .field = "b@r" },      .{ .field = "?" },
         },
     );
 
-    try testTokenizer("(x - 2) * (3 + ~y)", enum { @"-", @"*", @"+", @"~" }, &.{
+    try testTokenizer("(x - 2) * (3 + ~y)", &.{
         .paren_open,
         .{ .ident = "x" },
-        .@"-",
+        .{ .op_symbols = "-" },
         .{ .integer = 2 },
         .paren_close,
-        .@"*",
+        .{ .op_symbols = "*" },
         .paren_open,
         .{ .integer = 3 },
-        .@"+",
-        .@"~",
+        .{ .op_symbols = "+" },
+        .{ .op_symbols = "~" },
         .{ .ident = "y" },
         .paren_close,
     });
 
-    try testTokenizer("x+-3", enum { @"+-" }, .{
+    try testTokenizer("x+-3", &.{
         .{ .ident = "x" },
-        .@"+-",
+        .{ .op_symbols = "+-" },
         .{ .integer = 3 },
     });
-    try testTokenizer("x+-3", enum { @"+", @"-" }, .{
+    try testTokenizer("x+ -3", &.{
         .{ .ident = "x" },
-        .@"+",
-        .@"-",
+        .{ .op_symbols = "+" },
+        .{ .op_symbols = "-" },
         .{ .integer = 3 },
     });
-}
-
-test "Tokenizer operator edge cases" {
-    const ConfusingOpEnum1 = enum { @"+", @"++", @"-", @"--" };
-    try testTokenizer("+      ", ConfusingOpEnum1, .{.@"+"});
-    try testTokenizer("++     ", ConfusingOpEnum1, .{.@"++"});
-    try testTokenizer("+ +    ", ConfusingOpEnum1, .{ .@"+", .@"+" });
-    try testTokenizer("++ ++  ", ConfusingOpEnum1, .{ .@"++", .@"++" });
-    try testTokenizer("+ ++   ", ConfusingOpEnum1, .{ .@"+", .@"++" });
-    try testTokenizer("++ +   ", ConfusingOpEnum1, .{ .@"++", .@"+" });
-    try testTokenizer("++++   ", ConfusingOpEnum1, .{ .@"++", .@"++" });
-    try testTokenizer("+++++  ", ConfusingOpEnum1, .{ .@"++", .@"++", .@"+" });
-    try testTokenizer("++++++ ", ConfusingOpEnum1, .{ .@"++", .@"++", .@"++" });
-    try testTokenizer("+++++++", ConfusingOpEnum1, .{ .@"++", .@"++", .@"++", .@"+" });
-
-    try testTokenizer("-      ", ConfusingOpEnum1, .{.@"-"});
-    try testTokenizer("--     ", ConfusingOpEnum1, .{.@"--"});
-    try testTokenizer("- -    ", ConfusingOpEnum1, .{ .@"-", .@"-" });
-    try testTokenizer("-- --  ", ConfusingOpEnum1, .{ .@"--", .@"--" });
-    try testTokenizer("- --   ", ConfusingOpEnum1, .{ .@"-", .@"--" });
-    try testTokenizer("-- -   ", ConfusingOpEnum1, .{ .@"--", .@"-" });
-    try testTokenizer("----   ", ConfusingOpEnum1, .{ .@"--", .@"--" });
-    try testTokenizer("-----  ", ConfusingOpEnum1, .{ .@"--", .@"--", .@"-" });
-    try testTokenizer("------ ", ConfusingOpEnum1, .{ .@"--", .@"--", .@"--" });
-    try testTokenizer("-------", ConfusingOpEnum1, .{ .@"--", .@"--", .@"--", .@"-" });
-
-    const ConfusingOpEnum2 = enum { @"#", @"$", @"#$", @"$#" };
-    try testTokenizer("#      ", ConfusingOpEnum2, .{.@"#"});
-    try testTokenizer("##     ", ConfusingOpEnum2, .{ .@"#", .@"#" });
-    try testTokenizer("$      ", ConfusingOpEnum2, .{.@"$"});
-    try testTokenizer("$$     ", ConfusingOpEnum2, .{ .@"$", .@"$" });
-
-    try testTokenizer("#$     ", ConfusingOpEnum2, .{.@"#$"});
-    try testTokenizer("$#     ", ConfusingOpEnum2, .{.@"$#"});
-
-    try testTokenizer("#$#    ", ConfusingOpEnum2, .{ .@"#$", .@"#" });
-    try testTokenizer("$#$    ", ConfusingOpEnum2, .{ .@"$#", .@"$" });
-
-    try testTokenizer("#$#$   ", ConfusingOpEnum2, .{ .@"#$", .@"#$" });
-    try testTokenizer("$#$#   ", ConfusingOpEnum2, .{ .@"$#", .@"$#" });
-
-    try testTokenizer("#$$#   ", ConfusingOpEnum2, .{ .@"#$", .@"$#" });
-    try testTokenizer("$##$   ", ConfusingOpEnum2, .{ .@"$#", .@"#$" });
 }
 
 inline fn handleStringParseFailure(char_src: []const u8, failure: std.zig.string_literal.Error) noreturn {

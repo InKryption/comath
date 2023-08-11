@@ -96,7 +96,12 @@ pub inline fn eval(
         const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);
         analyzeUnusedInputs(deduped_expr, InputTag) catch |err| @compileError(@errorName(err));
     };
-    const root = comptime parse.parseExpr(expr, Ns.UnOp, Ns.BinOp, Ns.relations);
+    const root = comptime parse.parseExpr(
+        expr,
+        util.namespaceDecl(Ns, "UnOp") orelse null,
+        util.namespaceDecl(Ns, "BinOp") orelse null,
+        util.namespaceDecl(Ns, "relations") orelse null,
+    );
     return evalImpl(root, ctx, inputs);
 }
 inline fn analyzeUnusedInputs(
@@ -110,7 +115,6 @@ inline fn analyzeUnusedInputs(
         while (true) switch (tokenizer.next(expr)) {
             .eof => break,
             .ident => |ident| unused_set.remove(@field(InputTag, ident)),
-            .op_symbols => if (!tokenizer.skipOps()) unreachable,
             else => {},
         };
         var err_str: []const u8 = "";
@@ -136,7 +140,12 @@ pub fn Eval(
     comptime Inputs: type,
 ) type {
     const Ns = util.ImplicitDeref(Ctx);
-    const root = parse.parseExpr(expr, Ns.UnOp, Ns.BinOp, Ns.relations);
+    const root = parse.parseExpr(
+        expr,
+        util.namespaceDecl(Ns, "UnOp") orelse null,
+        util.namespaceDecl(Ns, "BinOp") orelse null,
+        util.namespaceDecl(Ns, "relations") orelse null,
+    );
     return EvalImpl(root, Ctx, Inputs);
 }
 
@@ -145,15 +154,13 @@ fn EvalImpl(
     comptime Ctx: type,
     comptime Inputs: type,
 ) type {
-    const UnOp = Ctx.UnOp;
-    const BinOp = Ctx.BinOp;
-
-    const EvalProperty = Ctx.EvalProperty;
-    const EvalIndexAccess = Ctx.EvalIndexAccess;
-    const EvalFuncCall = Ctx.EvalFuncCall;
-    const EvalUnOp = Ctx.EvalUnOp;
-    const EvalBinOp = Ctx.EvalBinOp;
-
+    const Ns = switch (@typeInfo(Ctx)) {
+        .Pointer => |pointer| switch (pointer.size) {
+            .One => pointer.child,
+            else => Ctx,
+        },
+        else => Ctx,
+    };
     return switch (expr) {
         .null => @compileError("Incomplete AST (encountered null expression)"),
         .ident => |ident| std.meta.FieldType(Inputs, @field(std.meta.FieldEnum(Inputs), ident)),
@@ -163,26 +170,26 @@ fn EvalImpl(
         .group => |group| EvalImpl(group.*, Ctx, Inputs),
         .field_access => |fa| blk: {
             const Lhs = EvalImpl(fa.accessed, Ctx, Inputs);
-            break :blk EvalProperty(Lhs, util.dedupe.scalarSlice(u8, fa.accessor[0..].*));
+            break :blk Ns.EvalProperty(Lhs, util.dedupe.scalarSlice(u8, fa.accessor[0..].*));
         },
         .index_access => |ia| blk: {
             const Lhs = EvalImpl(ia.accessed, Ctx, Inputs);
             const Rhs = EvalExprTupleImpl(ia.accessor, Ctx, Inputs);
-            break :blk EvalIndexAccess(Lhs, Rhs);
+            break :blk Ns.EvalIndexAccess(Lhs, Rhs);
         },
         .func_call => |fc| blk: {
             const Callee = EvalImpl(fc.callee, Ctx, Inputs);
             const Args = EvalExprTupleImpl(fc.args, Ctx, Inputs);
-            break :blk EvalFuncCall(Callee, Args);
+            break :blk Ns.EvalFuncCall(Callee, Args);
         },
         .un_op => |un| blk: {
             const Val = EvalImpl(un.val, Ctx, Inputs);
-            break :blk EvalUnOp(@field(UnOp, un.op), Val);
+            break :blk Ns.EvalUnOp(un.op, Val);
         },
         .bin_op => |bin| blk: {
             const Lhs = EvalImpl(bin.lhs, Ctx, Inputs);
             const Rhs = EvalImpl(bin.rhs, Ctx, Inputs);
-            break :blk EvalBinOp(Lhs, @field(BinOp, bin.op), Rhs);
+            break :blk Ns.EvalBinOp(Lhs, bin.op, Rhs);
         },
     };
 }
@@ -239,8 +246,13 @@ inline fn evalImpl(
     inputs: anytype,
 ) !EvalImpl(expr, @TypeOf(ctx), @TypeOf(inputs)) {
     const Ctx = @TypeOf(ctx);
-    const UnOp = Ctx.UnOp;
-    const BinOp = Ctx.BinOp;
+    const Ns = switch (@typeInfo(Ctx)) {
+        .Pointer => |pointer| switch (pointer.size) {
+            .One => pointer.child,
+            else => Ctx,
+        },
+        else => Ctx,
+    };
 
     const Inputs = @TypeOf(inputs);
     return switch (comptime expr) {
@@ -251,15 +263,15 @@ inline fn evalImpl(
         .float => |num| num,
         .group => |group| evalImpl(group.*, ctx, inputs),
         .field_access => |fa| blk: {
-            const Lhs = EvalImpl(fa.accessed, Ctx, Inputs);
+            const Lhs = EvalImpl(fa.accessed, Ns, Inputs);
             const lhs: Lhs = try evalImpl(fa.accessed, ctx, inputs);
             break :blk ctx.evalProperty(lhs, util.dedupe.scalarSlice(u8, fa.accessor[0..].*));
         },
         .index_access => |ia| blk: {
-            const Lhs = EvalImpl(ia.accessed, Ctx, Inputs);
+            const Lhs = EvalImpl(ia.accessed, Ns, Inputs);
             const lhs: Lhs = try evalImpl(ia.accessed, ctx, inputs);
 
-            const Rhs = EvalExprTupleImpl(ia.accessor, Ctx, Inputs);
+            const Rhs = EvalExprTupleImpl(ia.accessor, Ns, Inputs);
             const rhs: Rhs = rhs: {
                 if (comptime util.typeIsComptimeOnly(Rhs).?) {
                     break :rhs try comptime evalExprTupleImpl(ia.accessor, ctx, inputs);
@@ -271,10 +283,10 @@ inline fn evalImpl(
             break :blk ctx.evalIndexAccess(lhs, rhs);
         },
         .func_call => |fc| blk: {
-            const Callee = EvalImpl(fc.callee, Ctx, Inputs);
+            const Callee = EvalImpl(fc.callee, Ns, Inputs);
             const callee: Callee = try evalImpl(fc.callee, ctx, inputs);
 
-            const Args = EvalExprTupleImpl(fc.args, Ctx, Inputs);
+            const Args = EvalExprTupleImpl(fc.args, Ns, Inputs);
             const args: Args = args: {
                 if (comptime util.typeIsComptimeOnly(Args).?) {
                     break :args try comptime evalExprTupleImpl(fc.args, ctx, inputs);
@@ -286,18 +298,18 @@ inline fn evalImpl(
             break :blk ctx.evalFuncCall(callee, args);
         },
         .un_op => |un| blk: {
-            const Val = EvalImpl(un.val, Ctx, Inputs);
+            const Val = EvalImpl(un.val, Ns, Inputs);
             const val: Val = try evalImpl(un.val, ctx, inputs);
-            break :blk ctx.evalUnOp(@field(UnOp, un.op), val);
+            break :blk ctx.evalUnOp(un.op, val);
         },
         .bin_op => |bin| blk: {
-            const Lhs = EvalImpl(bin.lhs, Ctx, Inputs);
+            const Lhs = EvalImpl(bin.lhs, Ns, Inputs);
             const lhs: Lhs = try evalImpl(bin.lhs, ctx, inputs);
 
-            const Rhs = EvalImpl(bin.rhs, Ctx, Inputs);
+            const Rhs = EvalImpl(bin.rhs, Ns, Inputs);
             const rhs: Rhs = try evalImpl(bin.rhs, ctx, inputs);
 
-            break :blk ctx.evalBinOp(lhs, @field(BinOp, bin.op), rhs);
+            break :blk ctx.evalBinOp(lhs, bin.op, rhs);
         },
     };
 }
@@ -306,7 +318,7 @@ test eval {
     const BasicCtx = struct {
         pub const UnOp = enum { @"-" };
         pub const BinOp = enum { @"+", @"-", @"*", @"/" };
-        pub const relations: operator.RelationMap(BinOp) = .{
+        pub const relations = .{
             .@"+" = operator.relation(.left, 0),
             .@"-" = operator.relation(.left, 1),
             .@"*" = operator.relation(.left, 1),
@@ -348,25 +360,25 @@ test eval {
             return @call(.auto, callee, args);
         }
 
-        pub fn EvalUnOp(comptime op: UnOp, comptime T: type) type {
+        pub fn EvalUnOp(comptime op: []const u8, comptime T: type) type {
             _ = op;
             return T;
         }
-        pub fn evalUnOp(_: @This(), comptime op: UnOp, val: anytype) EvalUnOp(op, @TypeOf(val)) {
-            return switch (op) {
+        pub fn evalUnOp(_: @This(), comptime op: []const u8, val: anytype) EvalUnOp(op, @TypeOf(val)) {
+            return switch (@field(UnOp, op)) {
                 .@"-" => -val,
             };
         }
 
-        pub fn EvalBinOp(comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type {
+        pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {
             _ = op;
             return @TypeOf(
                 @as(Lhs, undefined),
                 @as(Rhs, undefined),
             );
         }
-        pub fn evalBinOp(_: @This(), lhs: anytype, comptime op: BinOp, rhs: anytype) EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
-            return switch (op) {
+        pub fn evalBinOp(_: @This(), lhs: anytype, comptime op: []const u8, rhs: anytype) EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+            return switch (@field(BinOp, op)) {
                 .@"+" => lhs + rhs,
                 .@"-" => lhs - rhs,
                 .@"*" => lhs * rhs,
@@ -388,6 +400,7 @@ test eval {
     try util.testing.expectEqual(12, eval("(y + 2) * x", BasicCtx{}, .{ .y = 2, .x = 3 }));
     try util.testing.expectEqual(8, eval("y + 2 * x", BasicCtx{}, .{ .y = 2, .x = 3 }));
     try util.testing.expectEqual(3, eval("a.b", BasicCtx{}, .{ .a = .{ .b = 3 } }));
+    try util.testing.expectEqual(6, eval("a / b / c", BasicCtx{}, .{ .a = 24, .b = 2, .c = 2 }));
 
     const test_fns = struct {
         // zig fmt: off
@@ -406,22 +419,16 @@ test eval {
     try util.testing.expectEqual([_]u8{ 'a', 'b', 'c' }, eval("a[0, 2, 4]", BasicCtx{}, .{ .a = "a b c" }));
 
     const PowCtx = struct {
-        pub const UnOp = enum {};
         pub const BinOp = enum { @"^" };
         pub const relations: operator.RelationMap(BinOp) = .{
             .@"^" = .{ .prec = 0, .assoc = .right },
         };
 
-        pub const EvalProperty = opaque {};
-        pub const EvalIndexAccess = opaque {};
-        pub const EvalUnOp = opaque {};
-        pub const EvalFuncCall = opaque {};
-
-        pub fn EvalBinOp(comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type {
+        pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {
             _ = op;
             return @TypeOf(@as(Lhs, 0), @as(Rhs, 0));
         }
-        pub inline fn evalBinOp(_: @This(), lhs: anytype, comptime op: BinOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+        pub inline fn evalBinOp(_: @This(), lhs: anytype, comptime op: []const u8, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
             return std.math.pow(@TypeOf(lhs, rhs), lhs, rhs);
         }
     };

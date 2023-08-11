@@ -137,40 +137,37 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
             return @call(.auto, callee, args);
         }
 
-        pub fn EvalUnOp(comptime op: UnOp, comptime T: type) type {
+        pub fn EvalUnOp(comptime op: []const u8, comptime T: type) type {
             if (@hasDecl(Ns, "EvalUnOp")) {
-                const op_tag = @field(Ns.UnOp, @tagName(op));
-                if (Ns.EvalUnOp(op_tag, T) != noreturn) {
-                    return Ns.EvalUnOp(op_tag, T);
+                if (Ns.EvalUnOp(op, T) != noreturn) {
+                    return Ns.EvalUnOp(op, T);
                 }
             }
-            return switch (op) {
+            return switch (@field(UnOp, op)) {
                 .@"-" => T,
             };
         }
-        pub inline fn evalUnOp(ctx: Self, comptime op: UnOp, val: anytype) !EvalUnOp(op, @TypeOf(val)) {
+        pub inline fn evalUnOp(ctx: Self, comptime op: []const u8, val: anytype) !EvalUnOp(op, @TypeOf(val)) {
             if (@hasDecl(Ns, "EvalUnOp")) {
-                const op_tag = @field(Ns.UnOp, @tagName(op));
-                if (Ns.EvalUnOp(op_tag, @TypeOf(val)) != noreturn) {
-                    return ctx.sub_ctx.evalUnOp(op_tag, val);
+                if (Ns.EvalUnOp(op, @TypeOf(val)) != noreturn) {
+                    return ctx.sub_ctx.evalUnOp(op, val);
                 }
             }
-            return switch (op) {
+            return switch (@field(UnOp, op)) {
                 .@"-" => -val,
             };
         }
 
-        pub fn EvalBinOp(comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type {
+        pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {
             if (@hasDecl(Ns, "EvalBinOp")) {
-                const op_tag = @field(Ns.BinOp, @tagName(op));
-                if (Ns.EvalBinOp(Lhs, op_tag, Rhs) != noreturn) {
-                    return Ns.EvalBinOp(Lhs, op_tag, Rhs);
+                if (Ns.EvalBinOp(Lhs, op, Rhs) != noreturn) {
+                    return Ns.EvalBinOp(Lhs, op, Rhs);
                 }
             }
 
             const lhs: Lhs = std.mem.zeroes(Lhs);
             const rhs: Rhs = std.mem.zeroes(Rhs);
-            return switch (op) {
+            return switch (@field(BinOp, op)) {
                 .@"+" => @TypeOf(lhs + rhs),
                 .@"+%" => @TypeOf(lhs +% rhs),
                 .@"+|" => @TypeOf(lhs +| rhs),
@@ -190,16 +187,15 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                 .@"@" => [rhs.len][lhs[0].len]@TypeOf(lhs[0][0]),
             };
         }
-        pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: BinOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+        pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: []const u8, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
             const Rhs = @TypeOf(rhs);
             if (@hasDecl(Ns, "EvalBinOp")) {
-                const op_tag = @field(Ns.BinOp, @tagName(op));
-                if (Ns.EvalBinOp(Lhs, op_tag, Rhs) != noreturn) {
-                    return ctx.sub_ctx.evalBinOp(lhs, op_tag, rhs);
+                if (Ns.EvalBinOp(Lhs, op, Rhs) != noreturn) {
+                    return ctx.sub_ctx.evalBinOp(lhs, op, rhs);
                 }
             }
-            return switch (op) {
+            return switch (@field(BinOp, op)) {
                 .@"+" => lhs + rhs,
                 .@"+%" => lhs +% rhs,
                 .@"+|" => lhs +% rhs,
@@ -276,26 +272,26 @@ test simpleCtx {
         pub const relations = .{
             .@"$" = .{ .prec = 2, .assoc = .right },
         };
-        pub fn EvalUnOp(comptime op: UnOp, comptime T: type) type {
-            return switch (op) {
+        pub fn EvalUnOp(comptime op: []const u8, comptime T: type) type {
+            return switch (@field(UnOp, op)) {
                 .@"++" => T,
             };
         }
-        pub fn evalUnOp(_: @This(), comptime op: UnOp, val: anytype) EvalUnOp(op, @TypeOf(val)) {
-            return switch (op) {
+        pub fn evalUnOp(_: @This(), comptime op: []const u8, val: anytype) EvalUnOp(op, @TypeOf(val)) {
+            return switch (@field(UnOp, op)) {
                 .@"++" => val + 1,
             };
         }
-        pub fn EvalBinOp(comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type {
-            return switch (op) {
+        pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {
+            return switch (@field(BinOp, op)) {
                 .@"^", .@"$" => @TypeOf(
                     @as(Lhs, undefined),
                     @as(Rhs, undefined),
                 ),
             };
         }
-        pub fn evalBinOp(_: @This(), lhs: anytype, comptime op: BinOp, rhs: anytype) EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
-            return switch (op) {
+        pub fn evalBinOp(_: @This(), lhs: anytype, comptime op: []const u8, rhs: anytype) EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+            return switch (@field(BinOp, op)) {
                 .@"^" => lhs ^ rhs,
                 .@"$" => std.math.log(@TypeOf(lhs, rhs), lhs, rhs),
             };
@@ -398,8 +394,8 @@ pub fn FnMethodCtx(
             return ctx.sub_ctx.evalFuncCall(callee, args);
         }
 
-        pub fn EvalUnOp(comptime op: UnOp, comptime T: type) type {
-            if (getOpMapping(T, @tagName(op), method_names, 1)) |name| {
+        pub fn EvalUnOp(comptime op: []const u8, comptime T: type) type {
+            if (getOpMapping(T, op, method_names, 1)) |name| {
                 const Method = util.ImplicitDeref(@TypeOf(@field(T, name)));
                 const method_info = @typeInfo(Method).Fn;
                 if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
@@ -409,16 +405,16 @@ pub fn FnMethodCtx(
             }
             return SubCtx.EvalUnOp(op, T);
         }
-        pub inline fn evalUnOp(ctx: Self, comptime op: UnOp, val: anytype) !EvalUnOp(op, @TypeOf(val)) {
+        pub inline fn evalUnOp(ctx: Self, comptime op: []const u8, val: anytype) !EvalUnOp(op, @TypeOf(val)) {
             const Val = @TypeOf(val);
-            if (comptime getOpMapping(Val, @tagName(op), method_names, 1)) |name| {
+            if (comptime getOpMapping(Val, op, method_names, 1)) |name| {
                 return @field(Val, name)(val);
             }
             return ctx.sub_ctx.evalUnOp(op, val);
         }
 
-        pub fn EvalBinOp(comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type {
-            if (comptime getOpMapping(Lhs, @tagName(op), method_names, 2)) |name| {
+        pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {
+            if (comptime getOpMapping(Lhs, op, method_names, 2)) |name| {
                 const Method = util.ImplicitDeref(@TypeOf(@field(Lhs, name)));
                 const method_info = @typeInfo(Method).Fn;
                 if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
@@ -429,9 +425,9 @@ pub fn FnMethodCtx(
             }
             return SubCtx.EvalBinOp(Lhs, op, Rhs);
         }
-        pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: BinOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+        pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: []const u8, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
-            if (comptime getOpMapping(Lhs, @tagName(op), method_names, 2)) |name| {
+            if (comptime getOpMapping(Lhs, op, method_names, 2)) |name| {
                 return @field(Lhs, name)(lhs, rhs);
             }
             return ctx.sub_ctx.evalBinOp(lhs, op, rhs);

@@ -22,43 +22,44 @@ The semantics of all the operations are defined by the `ctx` parameter, which sh
 which can be described in pseudo-code as:
 ```zig
 {
-    /// Optional declaration. If the context namespace does not have it declared,
-    /// it will be assumed to be false.
+    /// If the context namespace does not have it declared, it will be assumed to be false.
     /// If true, the `inputs` struct parameter of the `eval` function may contain
     /// fields which are not used in the `expr`.
     /// If false, a compile error will be issued should any of the fields in `inputs`
-    /// be unmentioned in `expr`.
+    /// not be referenced in `expr`.
     pub const allow_unused_inputs: bool = ...; // defaults to `false`
 
     /// Should contain tags whose names correspond to operators, which
-    /// must only be comprised of symbols contained in `operator.symbols`
+    /// must only be comprised of symbols contained in `operator.symbols`.
     pub const UnOp = enum {...};
-    /// Same constraints as `UnOp`
+    /// Same constraints as `UnOp`.
     pub const BinOp = enum {...};
     /// Struct value whose fields all correspond to the binary operators defined by `BinOp`,
     /// each with a value of type `operator.Relation` describing the binary operator's precedence
     /// level and associativity.
     pub const relations: operator.RelationMap(BinOp) = .{...};
 
-    /// corresponds to `lhs.field`
+    /// Corresponds to `lhs.field`.
     pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {...}
     pub fn evalProperty(ctx: @This(), lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field) {...}
 
-    /// corresponds to `lhs[rhs]`
+    /// Corresponds to `lhs[rhs]`.
     pub fn EvalIndexAccess(comptime Lhs: type, comptime Rhs: type) type {...}
     pub fn evalIndexAccess(ctx: @This(), lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {...}
 
-    /// corresponds to `callee(args...)`, where `args` is a tuple whose elements are the arguments to `callee`
+    /// Corresponds to `callee(args...)`, where `args` is a tuple whose elements are the arguments to `callee`.
     pub fn EvalFuncCall(comptime Callee: type, comptime Args: type) type {...}
     pub fn evalFuncCall(ctx: @This(), callee: anytype, args: anytype) !EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {...}
 
-    /// corresponds to `op value`
-    pub fn EvalUnOp(comptime op: UnOp, comptime T: type) type {...}
-    pub fn evalUnOp(ctx: @This(), comptime op: UnOp, value: anytype) !EvalUnOp(op, @TypeOf(value)) {...}
+    /// Corresponds to `op value`.
+    /// In most contexts, it should be sufficient to assume `@hasField(UnOp, op)`.
+    pub fn EvalUnOp(comptime op: []const u8, comptime T: type) type {...}
+    pub fn evalUnOp(ctx: @This(), comptime op: []const u8, value: anytype) !EvalUnOp(op, @TypeOf(value)) {...}
 
-    /// corresponds to `op value`
-    pub fn EvalBinOp(comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type {...}
-    pub fn evalBinOp(ctx: @This(), lhs: anytype, comptime op: BinOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {...}
+    /// Corresponds to `lhs op rhs`
+    /// In most contexts, it should be sufficient to assume `@hasField(BinOp, op)`.
+    pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {...}
+    pub fn evalBinOp(ctx: @This(), lhs: anytype, comptime op: []const u8, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {...}
 }
 ```
 

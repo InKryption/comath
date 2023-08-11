@@ -23,12 +23,15 @@ pub const Char = enum(comptime_int) {
 
 pub fn parseExpr(
     comptime expr: []const u8,
-    comptime UnOpEnum: type,
-    comptime BinOpEnum: type,
-    comptime relations: operator.RelationMap(BinOpEnum),
+    comptime UnOpEnum: ?type,
+    comptime BinOpEnum: ?type,
+    comptime relations: anytype,
 ) ExprNode {
     comptime {
-        for (@typeInfo(UnOpEnum).Enum.fields ++ @typeInfo(BinOpEnum).Enum.fields) |field| {
+        var enum_fields: []const std.builtin.Type.EnumField = &.{};
+        enum_fields = enum_fields ++ @typeInfo(UnOpEnum orelse enum {}).Enum.fields;
+        enum_fields = enum_fields ++ @typeInfo(BinOpEnum orelse enum {}).Enum.fields;
+        for (enum_fields) |field| {
             const i = util.indexOfNoneComptime(u8, field.name, Tokenizer.operator_characters) orelse continue;
             const list = list: {
                 var str: []const u8 = "";
@@ -61,7 +64,7 @@ fn ParseExprTester(
         ) !void {
             const actual = parseExpr(expr, UnOp, BinOp, relations);
             if (!actual.eql(expected)) {
-                @compileError(std.fmt.comptimePrint("Expected `{}`, got `{}`", .{ expected.fmt(), actual.fmt() }));
+                @compileError(std.fmt.comptimePrint("Expected `{}`, got `{}`", .{ expected.fmt(.{ .verbose_paren = true }), actual.fmt(.{ .verbose_paren = true }) }));
             }
         }
     };
@@ -210,15 +213,16 @@ fn parseExprImpl(
     comptime expr: []const u8,
     comptime nest_type: NestType,
     comptime tokenizer_init: Tokenizer,
-    comptime UnOpEnum: type,
-    comptime BinOpEnum: type,
-    comptime relations: operator.RelationMap(BinOpEnum),
+    comptime UnOpEnum: ?type,
+    comptime BinOpEnum: ?type,
+    comptime relations: anytype,
 ) ParseExprImplInnerUpdate {
     comptime {
         var result: ExprNode = .null;
         var tokenizer = tokenizer_init;
         var ends_with_comma = false;
 
+        @setEvalBranchQuota(expr.len + expr.len / 2);
         var can_be_unary = true;
         while (true) switch (tokenizer.next(expr)) {
             .eof => break,
@@ -241,14 +245,34 @@ fn parseExprImpl(
                 can_be_unary = false;
                 result = result.concatFieldAccess(field);
             },
-            .op_symbols => {
-                if (can_be_unary) {
-                    const op = tokenizer.nextOp(expr, UnOpEnum);
-                    result = result.concatUnOp(util.dedupe.scalarSlice(u8, @tagName(op)[0..].*));
-                } else {
-                    can_be_unary = true;
-                    const op = tokenizer.nextOp(expr, BinOpEnum);
-                    result = result.concatBinOp(util.dedupe.scalarSlice(u8, @tagName(op)[0..].*), relations);
+            .op_symbols => |op_symbols| {
+                var start = 0;
+                var len = op_symbols.len;
+                while (start < op_symbols.len) {
+                    if (len == 0) {
+                        @compileError("Unexpected operator symbols '" ++ op_symbols[start..] ++ "'");
+                    }
+                    const OpEnum = blk: {
+                        if (can_be_unary) break :blk UnOpEnum orelse @compileError(
+                            "No `UnOp` enum was given to parse the expected unary operator(s) in '" ++ op_symbols[start..],
+                        );
+                        break :blk BinOpEnum orelse @compileError(
+                            "No `BinOp` enum was given to parse the expected binary operator in '" ++ op_symbols[start..],
+                        );
+                    };
+                    const op = op_symbols[start..][0..len];
+                    if (!@hasField(OpEnum, op)) {
+                        len -= 1;
+                        continue;
+                    }
+                    start += len;
+                    len = op_symbols.len - start;
+                    if (!can_be_unary) {
+                        can_be_unary = true;
+                        result = result.concatBinOp(op, relations);
+                    } else {
+                        result = result.concatUnOp(op);
+                    }
                 }
             },
             inline .paren_open, .bracket_open => |_, tag| {
@@ -291,6 +315,15 @@ fn parseExprImpl(
             .tokenizer = tokenizer,
             .result = result,
         };
+    }
+}
+
+fn parseOpEnumFromStartOf(comptime OpEnum: type, comptime buffer: []const u8) []const u8 {
+    comptime {
+        var end = buffer.len;
+        while (end != 0 and !@hasField(OpEnum, buffer[0..end])) : (end -= 1) {}
+        if (end != 0) return util.dedupe.scalarSlice(u8, buffer[0..end].*);
+        @compileError("Unrecognized operator '" ++ buffer ++ "'");
     }
 }
 
@@ -426,13 +459,19 @@ pub const ExprNode = union(enum) {
                 .float,
                 .group,
                 => blk: {
-                    const old_rel: operator.Relation = @field(relations, bin.op) orelse @compileError("No definition for the relation of `" ++ bin.op ++ "`");
-                    const new_rel: operator.Relation = @field(relations, op) orelse @compileError("No definition for the relation of `" ++ op ++ "`");
-                    if (old_rel.prec == new_rel.prec and old_rel.assoc != new_rel.assoc) {
+                    const relation_map = switch (@typeInfo(@TypeOf(relations))) {
+                        .Optional => relations orelse .{},
+                        .Null => .{},
+                        else => relations,
+                    };
+                    const lhs_rel: operator.Relation = @as(?operator.Relation, @field(relation_map, bin.op)) orelse @compileError("Missing relationship definition for operator '" ++ bin.op ++ "'");
+                    const rhs_rel: operator.Relation = @as(?operator.Relation, @field(relation_map, op)) orelse @compileError("Missing relationship definition for operator '" ++ op ++ "'");
+
+                    if (lhs_rel.prec == rhs_rel.prec and lhs_rel.assoc != rhs_rel.assoc) {
                         @compileError(bin.op ++ " cannot be chained with " ++ op);
                     }
-                    if (old_rel.prec < new_rel.prec or
-                        (old_rel.prec == new_rel.prec and old_rel.assoc == .right))
+                    if (lhs_rel.prec < rhs_rel.prec or
+                        (lhs_rel.prec == rhs_rel.prec and lhs_rel.assoc == .right))
                     {
                         break :blk .{ .bin_op = &.{
                             .lhs = bin.lhs,
@@ -637,11 +676,19 @@ pub const ExprNode = union(enum) {
         }
     };
 
-    inline fn fmt(comptime expr: ExprNode) Fmt {
-        return .{ .expr = expr };
+    inline fn fmt(
+        comptime expr: ExprNode,
+        comptime config: Fmt.Config,
+    ) Fmt {
+        return .{ .expr = expr, .config = config };
     }
     const Fmt = struct {
         expr: ExprNode,
+        config: Config,
+
+        const Config = struct {
+            verbose_paren: bool = false,
+        };
 
         pub fn format(
             comptime formatter: Fmt,
@@ -654,16 +701,16 @@ pub const ExprNode = union(enum) {
             const str = switch (formatter.expr) {
                 .null => "null",
                 .ident => |ident| ident,
-                .field_access => |field| std.fmt.comptimePrint("{}.{s}", .{ field.accessed.fmt(), field.accessor }),
-                .index_access => |index| std.fmt.comptimePrint("{}[{}]", .{ index.accessed.fmt(), index.accessor.fmt() }),
+                .field_access => |field| std.fmt.comptimePrint("{}.{s}", .{ field.accessed.fmt(formatter.config), field.accessor }),
+                .index_access => |index| std.fmt.comptimePrint("{}[{}]", .{ index.accessed.fmt(formatter.config), index.accessor.fmt(formatter.config) }),
                 .func_call => |fc| std.fmt.comptimePrint("{}", .{fc.callee}) ++ args: {
                     var args: []const u8 = "";
                     args = args ++ "(";
                     if (fc.args.len != 0) {
-                        args = args ++ std.fmt.comptimePrint("{}", .{fc.args[0].fmt()});
+                        args = args ++ std.fmt.comptimePrint("{}", .{fc.args[0].fmt(formatter.config)});
                     }
                     for (fc.args[1..]) |arg| {
-                        args = args ++ std.fmt.comptimePrint(", {}", .{arg.fmt()});
+                        args = args ++ std.fmt.comptimePrint(", {}", .{arg.fmt(formatter.config)});
                     }
                     args = args ++ ")";
                     break :args args;
@@ -671,9 +718,16 @@ pub const ExprNode = union(enum) {
                 .integer => |int| std.fmt.comptimePrint("{d}", .{int}),
                 .char => |char| std.fmt.comptimePrint("'{u}'", .{@intFromEnum(char)}),
                 .float => |num| std.fmt.comptimePrint(num.src),
-                .group => |group| std.fmt.comptimePrint("({})", .{group.fmt()}),
-                .bin_op => |bin_op| std.fmt.comptimePrint("{} {s} {}", .{ bin_op.lhs.fmt(), bin_op.op, bin_op.rhs.fmt() }),
-                .un_op => |un_op| std.fmt.comptimePrint("{s}{}", .{ un_op.op, un_op.val.fmt() }),
+                .group => |group| std.fmt.comptimePrint("({})", .{group.fmt(formatter.config)}),
+                .bin_op => |bin_op| std.fmt.comptimePrint("{} {s} {}", .{ bin_op.lhs.fmt(formatter.config), bin_op.op, bin_op.rhs.fmt(formatter.config) }),
+                .un_op => |un_op| std.fmt.comptimePrint("{s}{}", .{ un_op.op, un_op.val.fmt(formatter.config) }),
+            };
+            if (formatter.config.verbose_paren) switch (formatter.expr) {
+                .bin_op, .un_op => {
+                    try writer.writeAll("(" ++ str ++ ")");
+                    return;
+                },
+                else => {},
             };
             try writer.writeAll(str);
         }
