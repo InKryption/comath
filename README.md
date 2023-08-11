@@ -22,6 +22,14 @@ The semantics of all the operations are defined by the `ctx` parameter, which sh
 which can be described in pseudo-code as:
 ```zig
 {
+    /// Optional declaration. If the context namespace does not have it declared,
+    /// it will be assumed to be false.
+    /// If true, the `inputs` struct parameter of the `eval` function may contain
+    /// fields which are not used in the `expr`.
+    /// If false, a compile error will be issued should any of the fields in `inputs`
+    /// be unmentioned in `expr`.
+    pub const allow_unused_inputs: bool = ...; // defaults to `false`
+
     /// Should contain tags whose names correspond to operators, which
     /// must only be comprised of symbols contained in `operator.symbols`
     pub const UnOp = enum {...};
