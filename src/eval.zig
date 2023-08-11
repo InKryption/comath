@@ -162,7 +162,7 @@ fn EvalImpl(
         else => Ctx,
     };
     return switch (expr) {
-        .null => @compileError("Incomplete AST (encountered null expression)"),
+        .null => noreturn,
         .err => noreturn,
         .ident => |ident| std.meta.FieldType(Inputs, @field(std.meta.FieldEnum(Inputs), ident)),
         .integer => comptime_int,
