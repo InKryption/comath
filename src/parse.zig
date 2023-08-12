@@ -28,9 +28,9 @@ pub fn parseExpr(
     comptime relations: anytype,
 ) ExprNode {
     comptime {
-        var enum_fields: []const std.builtin.Type.EnumField = &.{};
-        enum_fields = enum_fields ++ @typeInfo(UnOpEnum orelse enum {}).Enum.fields;
-        enum_fields = enum_fields ++ @typeInfo(BinOpEnum orelse enum {}).Enum.fields;
+        const enum_fields =
+            @typeInfo(UnOpEnum orelse enum {}).Enum.fields ++
+            @typeInfo(BinOpEnum orelse enum {}).Enum.fields;
         for (enum_fields) |field| {
             const i = util.indexOfNoneComptime(u8, field.name, Tokenizer.operator_characters) orelse continue;
             const list = list: {

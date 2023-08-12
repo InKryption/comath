@@ -88,9 +88,15 @@ pub inline fn eval(
     inputs: anytype,
 ) !Eval(expr, @TypeOf(ctx), @TypeOf(inputs)) {
     const Ctx = @TypeOf(ctx);
-    const Ns = util.ImplicitDeref(Ctx);
+    const Ns = switch (@typeInfo(Ctx)) {
+        .Pointer => @TypeOf(ctx.*),
+        else => Ctx,
+    };
+    const allow_unused_inputs: bool =
+        @hasDecl(Ns, "allow_unused_inputs") and
+        Ns.allow_unused_inputs;
     const Inputs = @TypeOf(inputs);
-    const allow_unused_inputs: bool = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
+
     comptime if (!allow_unused_inputs and @typeInfo(Inputs).Struct.fields.len != 0) {
         const InputTag = util.dedupe.Enum(std.meta.FieldEnum(Inputs));
         const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);

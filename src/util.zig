@@ -166,19 +166,6 @@ pub inline fn replaceAnyWithScalarComptime(
         return @select(T, matches, replacement_vec, input[0..].*);
     }
 }
-pub inline fn replaceScalarComptime(
-    comptime T: type,
-    comptime input: []const T,
-    comptime needle: T,
-    comptime replacement: T,
-) [input.len]T {
-    comptime {
-        const needle_vec: @Vector(input.len, T) = @splat(needle);
-        const replacement_vec: @Vector(input.len, T) = @splat(replacement);
-        const matches = input[0..].* == needle_vec;
-        return @select(T, matches, replacement_vec, input[0..].*);
-    }
-}
 
 pub inline fn indexOfNonePosComptime(
     comptime T: type,
