@@ -3,9 +3,110 @@ const comath = @import("main.zig");
 const operator = comath.operator;
 const util = @import("util");
 
-const SimpleUnOp = enum {
-    @"-",
-};
+pub fn DefaultEvalNumberLiteral(comptime src: []const u8) type {
+    return switch (std.zig.parseNumberLiteral(src)) {
+        .int, .big_int => comptime_int,
+        .float => comptime_float,
+        .failure => noreturn,
+    };
+}
+pub fn defaultEvalNumberLiteral(comptime src: []const u8) DefaultEvalNumberLiteral(src) {
+    return switch (std.zig.parseNumberLiteral(src)) {
+        .int => |val| val,
+        .big_int => |base| blk: {
+            var x = 0;
+            const digits_start = if (base == .decimal) 0 else 2;
+            for (src[digits_start..]) |digit| {
+                const val = switch (digit) {
+                    '0'...'9' => digit - '0',
+                    'A'...'F' => digit - 'A' + 10,
+                    'a'...'f' => digit - 'a' + 10,
+                    else => @compileError("Invalid integer literal '" ++ src ++ "'"),
+                };
+                if (val >= @intFromEnum(base)) @compileError("Invalid integer literal '" ++ src ++ "'");
+                x *= @intFromEnum(base);
+                x += val;
+            }
+            break :blk x;
+        },
+        .float => std.fmt.parseFloat(f128, src) catch |err| @compileError(@errorName(err)),
+        .failure => |failure| @compileError(stringifyNumberParseFailure(src, failure)),
+    };
+}
+
+inline fn stringifyNumberParseFailure(
+    comptime num_src: []const u8,
+    comptime failure: std.zig.number_literal.Error,
+) []const u8 {
+    switch (failure) {
+        .leading_zero => "Invalid leading zeroes in '" ++ num_src ++ "'",
+        .digit_after_base => "Expected digit after base in '" ++ num_src ++ "'",
+        .upper_case_base, .invalid_float_base => "Invalid base in '" ++ num_src ++ "'",
+        .repeated_underscore, .invalid_underscore_after_special => "Invalid underscore in '" ++ num_src ++ "'",
+        .invalid_digit => |info| std.fmt.comptimePrint(
+            "Invalid digit '{c}' in '{s}' with base '{s}'",
+            .{ num_src[info.i], num_src, @tagName(info.base) },
+        ),
+        .invalid_digit_exponent => |exp_idx| std.fmt.comptimePrint(
+            "Invalid exponent '{c}' in '{s}'",
+            .{ num_src[exp_idx], num_src },
+        ),
+        .duplicate_period => "Duplicate periods in '" ++ num_src ++ "'",
+        .duplicate_exponent => "Duplicate exponents in '" ++ num_src ++ "'",
+        .exponent_after_underscore => "Exponent after underscore in '" ++ num_src ++ "'",
+        .special_after_underscore => |spec_idx| std.fmt.comptimePrint(
+            "Invalid '{c}' after underscore in '{s}'",
+            .{ num_src[spec_idx], num_src },
+        ),
+        .trailing_special,
+        .trailing_underscore,
+        .invalid_character,
+        .invalid_exponent_sign,
+        => |err_idx| std.fmt.comptimePrint(
+            "Invalid '{c}' in '{s}'",
+            .{ num_src[err_idx], num_src },
+        ),
+    }
+}
+
+pub fn DefaultNumberLiteralCtx(comptime SubCtx: type) type {
+    return struct {
+        sub_ctx: SubCtx,
+        const Self = @This();
+
+        pub const allow_unused_inputs = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
+
+        pub const UnOp = if (!@hasDecl(Ns, "UnOp")) SimpleUnOp else operator.OpEnumUnion(SimpleUnOp, Ns.UnOp);
+        pub const BinOp = if (!@hasDecl(Ns, "BinOp")) SimpleBinOp else operator.OpEnumUnion(SimpleBinOp, Ns.BinOp);
+        pub const relations: operator.RelationMap(BinOp) = if (!@hasDecl(Ns, "relations"))
+            simple_relations // if this issues an error about missing fields, you need to specify the relations of your custom operators in your SubCtx
+        else blk: {
+            var relations_map: operator.RelationMap(BinOp) = undefined;
+            for (@typeInfo(@TypeOf(relations_map)).Struct.fields) |field| {
+                const overriden = @hasField(Ns.BinOp, field.name) and @hasField(@TypeOf(Ns.relations), field.name);
+                const source = if (overriden) Ns.relations else simple_relations;
+                @field(relations_map, field.name) = @field(source, field.name);
+            }
+            break :blk relations_map;
+        };
+
+        pub const EvalNumberLiteral = DefaultEvalNumberLiteral;
+        pub const evalNumberLiteral = defaultEvalNumberLiteral;
+
+        const Ns = switch (@typeInfo(SubCtx)) {
+            .Struct, .Union, .Enum => SubCtx,
+            .Pointer => |pointer| if (pointer.size != .One)
+                struct {}
+            else switch (@typeInfo(pointer.child)) {
+                .Struct, .Union, .Enum, .Opaque => pointer.child,
+                else => struct {},
+            },
+            else => struct {},
+        };
+    };
+}
+
+const SimpleUnOp = enum { @"-" };
 const SimpleBinOp = enum {
     @"+",
     @"+|",
@@ -53,27 +154,17 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
         sub_ctx: SubCtx,
         const Self = @This();
 
-        const significant_ctx = switch (@typeInfo(util.ImplicitDeref(SubCtx))) {
-            .Struct, .Union, .Enum, .Opaque => true,
-            else => false,
-        };
-        const Ns = if (significant_ctx) util.ImplicitDeref(SubCtx) else struct {};
-
         pub const allow_unused_inputs = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
 
         pub const UnOp = if (!@hasDecl(Ns, "UnOp")) SimpleUnOp else operator.OpEnumUnion(SimpleUnOp, Ns.UnOp);
         pub const BinOp = if (!@hasDecl(Ns, "BinOp")) SimpleBinOp else operator.OpEnumUnion(SimpleBinOp, Ns.BinOp);
         pub const relations: operator.RelationMap(BinOp) = if (!@hasDecl(Ns, "relations"))
             simple_relations // if this issues an error about missing fields, you need to specify the relations of your custom operators in your SubCtx
-        else blk: {
-            var relations_map: operator.RelationMap(BinOp) = undefined;
-            for (@typeInfo(@TypeOf(relations_map)).Struct.fields) |field| {
-                const overriden = @hasField(Ns.BinOp, field.name) and @hasField(@TypeOf(Ns.relations), field.name);
-                const source = if (overriden) Ns.relations else simple_relations;
-                @field(relations_map, field.name) = @field(source, field.name);
-            }
-            break :blk relations_map;
-        };
+        else
+            Ns.relations;
+
+        pub const EvalNumberLiteral = DefaultEvalNumberLiteral;
+        pub const evalNumberLiteral = defaultEvalNumberLiteral;
 
         pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {
             if (@hasDecl(Ns, "EvalProperty")) {
@@ -248,7 +339,27 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                 },
             };
         }
+
+        const Ns = switch (@typeInfo(SubCtx)) {
+            .Struct, .Union, .Enum => SubCtx,
+            .Pointer => |pointer| if (pointer.size != .One)
+                struct {}
+            else switch (@typeInfo(pointer.child)) {
+                .Struct, .Union, .Enum, .Opaque => pointer.child,
+                else => struct {},
+            },
+            else => struct {},
+        };
     };
+}
+
+test {
+    if (true) {
+        std.log.err("{s}:{d}:{d}: TODO: Resurrect this test", .{ @src().file, @src().line, @src().column });
+        return error.SkipZigTest;
+    } else {
+        try util.testing.expectEqual(6 - 3 + 4 + 2, comath.eval("6*1-3*1+4*1+2", simpleCtx({}), .{}));
+    }
 }
 
 test simpleCtx {
@@ -323,9 +434,24 @@ pub fn FnMethodCtx(
         sub_ctx: SubCtx,
         const Self = @This();
 
-        pub const UnOp = SubCtx.UnOp;
-        pub const BinOp = SubCtx.BinOp;
-        pub const relations = SubCtx.relations;
+        pub const allow_unused_inputs = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
+
+        pub const UnOp = Ns.UnOp;
+        pub const BinOp = Ns.BinOp;
+        pub const relations = Ns.relations;
+
+        pub fn EvalNumberLiteral(comptime src: []const u8) type {
+            if (@hasDecl(Ns, "EvalNumberLiteral")) {
+                return Ns.EvalNumberLiteral(src);
+            }
+            return DefaultEvalNumberLiteral(src);
+        }
+        pub fn evalNumberLiteral(comptime src: []const u8) EvalNumberLiteral(src) {
+            if (@hasDecl(Ns, "evalNumberLiteral")) {
+                return Ns.evalNumberLiteral(src);
+            }
+            return defaultEvalNumberLiteral(src);
+        }
 
         pub fn EvalProperty(comptime T: type, comptime field: []const u8) type {
             if (getOpMapping(T, "evalProperty", method_names, 2)) |name| {
@@ -337,7 +463,7 @@ pub fn FnMethodCtx(
                 const field_arg = if (method_info.params[1].type) |FieldArg| castStringTo(FieldArg, field) else field;
                 return util.GetPayloadIfErrorUnion(@TypeOf(@field(T, name)(val, field_arg)));
             }
-            return SubCtx.EvalProperty(T, field);
+            return Ns.EvalProperty(T, field);
         }
         pub inline fn evalProperty(ctx: Self, val: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(val), field) {
             const T = @TypeOf(val);
@@ -361,7 +487,7 @@ pub fn FnMethodCtx(
                 const rhs: (method_info.params[0].type orelse Rhs) = undefined;
                 return util.GetPayloadIfErrorUnion(@TypeOf(@field(Lhs, name)(lhs, rhs)));
             }
-            return SubCtx.EvalIndexAccess(Lhs, Rhs);
+            return Ns.EvalIndexAccess(Lhs, Rhs);
         }
         pub inline fn evalIndexAccess(ctx: Self, lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
@@ -382,7 +508,7 @@ pub fn FnMethodCtx(
                 const rhs: (method_info.params[0].type orelse Args) = undefined;
                 return util.GetPayloadIfErrorUnion(@TypeOf(@call(.auto, @field(Callee, name), .{lhs} ++ rhs)));
             }
-            return SubCtx.EvalFuncCall(Callee, Args);
+            return Ns.EvalFuncCall(Callee, Args);
         }
         pub inline fn evalFuncCall(ctx: Self, callee: anytype, args: anytype) !EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
             const Callee = @TypeOf(callee);
@@ -403,7 +529,7 @@ pub fn FnMethodCtx(
                 const val: (method_info.params[0].type orelse T) = undefined;
                 return util.GetPayloadIfErrorUnion(@TypeOf(@field(T, name)(val)));
             }
-            return SubCtx.EvalUnOp(op, T);
+            return Ns.EvalUnOp(op, T);
         }
         pub inline fn evalUnOp(ctx: Self, comptime op: []const u8, val: anytype) !EvalUnOp(op, @TypeOf(val)) {
             const Val = @TypeOf(val);
@@ -423,7 +549,7 @@ pub fn FnMethodCtx(
                 const rhs: (method_info.params[1].type orelse Rhs) = undefined;
                 return util.GetPayloadIfErrorUnion(@TypeOf(@field(Lhs, name)(lhs, rhs)));
             }
-            return SubCtx.EvalBinOp(Lhs, op, Rhs);
+            return Ns.EvalBinOp(Lhs, op, Rhs);
         }
         pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: []const u8, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
@@ -432,6 +558,17 @@ pub fn FnMethodCtx(
             }
             return ctx.sub_ctx.evalBinOp(lhs, op, rhs);
         }
+
+        const Ns = switch (@typeInfo(SubCtx)) {
+            .Struct, .Union, .Enum => SubCtx,
+            .Pointer => |pointer| if (pointer.size != .One)
+                struct {}
+            else switch (@typeInfo(pointer.child)) {
+                .Struct, .Union, .Enum, .Opaque => pointer.child,
+                else => struct {},
+            },
+            else => struct {},
+        };
     };
 }
 

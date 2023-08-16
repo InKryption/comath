@@ -39,6 +39,10 @@ which can be described in pseudo-code as:
     /// level and associativity.
     pub const relations: operator.RelationMap(BinOp) = .{...};
 
+    /// Determines the value and type of number literals
+    pub fn EvalNumberLiteral(comptime src: []const u8) type {...}
+    pub fn evalNumberLiteral(comptime src: []const u8) EvalNumberLiteral(src) {...}
+
     /// Corresponds to `lhs.field`.
     pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {...}
     pub fn evalProperty(ctx: @This(), lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field) {...}

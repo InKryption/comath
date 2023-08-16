@@ -6,21 +6,6 @@ const util = @import("util");
 const Tokenizer = @import("Tokenizer.zig");
 const operator = @import("operator.zig");
 
-/// Represents a non-integer value, represented by
-/// the source code can be interpreted as needed.
-pub const Number = struct {
-    src: []const u8,
-
-    pub fn asFloat(comptime number: Number) comptime_float {
-        comptime return std.fmt.parseFloat(f128, number.src) catch |err| @compileError(@errorName(err));
-    }
-};
-
-/// Represents a character literal value, distinguished from `comptime_int`.
-pub const Char = enum(comptime_int) {
-    _,
-};
-
 pub fn parseExpr(
     comptime expr: []const u8,
     comptime UnOpEnum: ?type,
@@ -62,7 +47,7 @@ fn ParseExprTester(
             comptime expr: []const u8,
             comptime expected: ExprNode,
         ) !void {
-            const actual = parseExpr(expr, UnOp, BinOp, relations);
+            const actual = comptime parseExpr(expr, UnOp, BinOp, relations);
             if (!actual.eql(expected)) {
                 @compileError(std.fmt.comptimePrint("Expected `{}`, got `{}`", .{ expected.fmt(.{ .verbose_paren = true }), actual.fmt(.{ .verbose_paren = true }) }));
             }
@@ -72,17 +57,11 @@ fn ParseExprTester(
 
 test parseExpr {
     const helper = struct {
-        inline fn int(comptime val: comptime_int) ExprNode {
-            return .{ .integer = val };
-        }
-        inline fn float(comptime src: []const u8) ExprNode {
-            return .{ .float = Number{ .src = src } };
+        inline fn number(comptime src: []const u8) ExprNode {
+            return .{ .number = src };
         }
         inline fn ident(comptime name: []const u8) ExprNode {
             return .{ .ident = name };
-        }
-        inline fn char(comptime val: comptime_int) ExprNode {
-            return .{ .char = @enumFromInt(val) };
         }
         inline fn group(comptime expr: ExprNode) ExprNode {
             return .{ .group = &expr };
@@ -122,10 +101,8 @@ test parseExpr {
             } };
         }
     };
-    const int = helper.int;
-    const float = helper.float;
+    const number = helper.number;
     const ident = helper.ident;
-    const char = helper.char;
     const group = helper.group;
     const err = helper.err;
     const binOp = helper.binOp;
@@ -145,40 +122,40 @@ test parseExpr {
         },
     );
 
-    try Tester.expectEqual("423_324", int(423_324));
-    try Tester.expectEqual("-423_324", unOp("-", int(423_324)));
-    try Tester.expectEqual("~-423_324", unOp("~", unOp("-", int(423_324))));
-    try Tester.expectEqual("~(-423_324)", unOp("~", group(unOp("-", int(423_324)))));
-    try Tester.expectEqual("!('\u{A0}' + a ^ (3 / y.z))", unOp("!", group(binOp(
-        char('\u{A0}'),
+    try Tester.expectEqual("423_324", number("423_324"));
+    try Tester.expectEqual("-423_324", unOp("-", number("423_324")));
+    try Tester.expectEqual("~-423_324", unOp("~", unOp("-", number("423_324"))));
+    try Tester.expectEqual("~(-423_324)", unOp("~", group(unOp("-", number("423_324")))));
+    try Tester.expectEqual("!(0.3 + a ^ (3 / y.z))", unOp("!", group(binOp(
+        number("0.3"),
         "+",
         binOp(
             ident("a"),
             "^",
-            group(binOp(int(3), "/", fieldAccess(ident("y"), "z"))),
+            group(binOp(number("3"), "/", fieldAccess(ident("y"), "z"))),
         ),
     ))));
     try Tester.expectEqual("3 + -2", binOp(
-        int(3),
+        number("3"),
         "+",
-        unOp("-", int(2)),
+        unOp("-", number("2")),
     ));
     try Tester.expectEqual("(y + 2) * x", binOp(
-        group(binOp(ident("y"), "+", int(2))),
+        group(binOp(ident("y"), "+", number("2"))),
         "*",
         ident("x"),
     ));
     try Tester.expectEqual("y + 2 * x", binOp(
         ident("y"),
         "+",
-        binOp(int(2), "*", ident("x")),
+        binOp(number("2"), "*", ident("x")),
     ));
     try Tester.expectEqual("2.0 * y ^ 3", binOp(
-        float("2.0"),
+        number("2.0"),
         "*",
-        binOp(ident("y"), "^", int(3)),
+        binOp(ident("y"), "^", number("3")),
     ));
-    try Tester.expectEqual("2 ^ 3 ^ 4", binOp(int(2), "^", binOp(int(3), "^", int(4))));
+    try Tester.expectEqual("2 ^ 3 ^ 4", binOp(number("2"), "^", binOp(number("3"), "^", number("4"))));
 
     try Tester.expectEqual("a.b", fieldAccess(ident("a"), "b"));
     try Tester.expectEqual("a + b.c", binOp(ident("a"), "+", fieldAccess(ident("b"), "c")));
@@ -212,6 +189,32 @@ test parseExpr {
     try Tester.expectEqual("foo )", err("Unexpected closing parentheses"));
     try Tester.expectEqual("foo (", err("Missing closing parentheses"));
     try Tester.expectEqual("foo (a,", err("Missing closing parentheses"));
+
+    if (true) {
+        std.log.err("{s}:{d}:{d}: TODO: Resurrect this test", .{ @src().file, @src().line, @src().column });
+        return error.SkipZigTest;
+    } else {
+        try Tester.expectEqual(
+            "6*1-3*1+4*1+2",
+            binOp(
+                binOp(
+                    binOp(
+                        binOp(number("6"), "*", number("1")),
+                        "-",
+                        binOp(number("3"), "*", number("1")),
+                    ),
+                    "+",
+                    binOp(
+                        number("4"),
+                        "*",
+                        number("1"),
+                    ),
+                ),
+                "+",
+                number("2"),
+            ),
+        );
+    }
 }
 
 const NestType = enum(comptime_int) { none, paren, bracket };
@@ -242,45 +245,59 @@ fn parseExprImpl(
 
         @setEvalBranchQuota(expr.len + expr.len / 2);
         var can_be_unary = true;
-        mainloop: while (true) switch (tokenizer.next(expr)) {
+        while (true) switch (tokenizer.next(expr)) {
             .eof => break,
-            inline //
-            .ident,
-            .integer,
-            => |val, tag| {
+            .ident => |ident| {
                 can_be_unary = false;
-                result = result.concatExpr(@unionInit(ExprNode, @tagName(tag), val));
+                result = result.concatIdent(ident);
             },
-            .char => |val| {
+            .number => |number_src| {
                 can_be_unary = false;
-                result = result.concatExpr(.{ .char = @enumFromInt(val) });
-            },
-            .float => |val| {
-                can_be_unary = false;
-                result = result.concatExpr(.{ .float = Number{ .src = val } });
+                result = result.concatNumber(number_src);
             },
             .field => |field| {
                 can_be_unary = false;
                 result = result.concatFieldAccess(field);
             },
             .op_symbols => |op_symbols| {
+                assert(op_symbols.len != 0);
+
                 var start = 0;
                 var len = op_symbols.len;
-                while (start < op_symbols.len) {
-                    if (len == 0) {
-                        result = .{ .err = "Unexpected operator symbols '" ++ op_symbols[start..] ++ "'" };
-                        break :mainloop;
-                    }
-                    const OpEnum = blk: {
-                        if (can_be_unary) break :blk UnOpEnum orelse {
-                            result = .{ .err = "No `UnOp` enum was given to parse the expected unary operator(s) in '" ++ op_symbols[start..] };
-                            break :mainloop;
-                        };
-                        break :blk BinOpEnum orelse {
-                            result = .{ .err = "No `BinOp` enum was given to parse the expected binary operator in '" ++ op_symbols[start..] };
-                            break :mainloop;
-                        };
+
+                if (!can_be_unary) {
+                    const OpEnum = BinOpEnum orelse {
+                        result = .{ .err = "No `BinOp` enum was given to parse the expected unary operator(s) in '" ++ op_symbols[start..] };
+                        break;
                     };
+                    while (start < op_symbols.len) {
+                        if (len == 0) return .{
+                            .err = "Unexpected operator symbols '" ++ op_symbols[start..] ++ "'",
+                        };
+
+                        const op = op_symbols[start..][0..len];
+                        if (!@hasField(OpEnum, op)) {
+                            len -= 1;
+                            continue;
+                        }
+                        start += len;
+                        len = op_symbols.len - start;
+                        result = result.concatBinOp(op, relations);
+                        break;
+                    }
+                    can_be_unary = true;
+                }
+                if (start == op_symbols.len) continue;
+
+                const OpEnum = UnOpEnum orelse {
+                    result = .{ .err = "No `UnOp` enum was given to parse the expected unary operator(s) in '" ++ op_symbols[start..] };
+                    break;
+                };
+                while (start < op_symbols.len) {
+                    if (len == 0) return .{
+                        .err = "Unexpected operator symbols '" ++ op_symbols[start..] ++ "'",
+                    };
+
                     const op = op_symbols[start..][0..len];
                     if (!@hasField(OpEnum, op)) {
                         len -= 1;
@@ -288,12 +305,7 @@ fn parseExprImpl(
                     }
                     start += len;
                     len = op_symbols.len - start;
-                    if (!can_be_unary) {
-                        can_be_unary = true;
-                        result = result.concatBinOp(op, relations);
-                    } else {
-                        result = result.concatUnOp(op);
-                    }
+                    result = result.concatUnOp(op);
                 }
             },
             inline .paren_open, .bracket_open => |_, tag| {
@@ -333,7 +345,7 @@ fn parseExprImpl(
                         },
                     }
                 }
-                result = result.concatFunctionArgsOrJustGroup(inner_nest_type, util.dedupe.scalarSlice(ExprNode, args[0..].*));
+                result = result.concatFunctionArgsOrJustGroup(inner_nest_type, args);
             },
             .comma => {
                 can_be_unary = undefined;
@@ -361,14 +373,12 @@ fn parseExprImpl(
     }
 }
 
-pub const ExprNode = union(enum) {
+pub const ExprNode = union(enum(comptime_int)) {
     null,
     err: []const u8,
 
     ident: []const u8,
-    integer: comptime_int,
-    char: Char,
-    float: Number,
+    number: []const u8,
     group: *const ExprNode,
     field_access: *const FieldAccess,
     index_access: *const IndexAccess,
@@ -387,9 +397,7 @@ pub const ExprNode = union(enum) {
             .err => util.eqlComptime(u8, val_a, val_b),
 
             .ident => util.eqlComptime(u8, val_a, val_b),
-            .integer => val_a == val_b,
-            .char => val_a == val_b,
-            .float => util.eqlComptime(u8, val_a.src, val_b.src),
+            .number => util.eqlComptime(u8, val_a, val_b),
             .group => val_a.eql(val_b.*),
             .field_access => val_a.accessed.eql(val_b.accessed) and util.eqlComptime(u8, val_a.accessor, val_b.accessor),
             .index_access => val_a.accessed.eql(val_b.accessed) and
@@ -421,7 +429,7 @@ pub const ExprNode = union(enum) {
     ) ExprNode {
         return switch (base) {
             .null => ExprNode{ .un_op = &.{
-                .op = util.dedupe.scalarSlice(u8, op[0..].*),
+                .op = op,
                 .val = .null,
             } },
             .err => base,
@@ -435,9 +443,7 @@ pub const ExprNode = union(enum) {
             .ident,
             .field_access,
             .index_access,
-            .integer,
-            .char,
-            .float,
+            .number,
             .group,
             .func_call,
             => .{ .err = "Unexpected token '" ++ op ++ "'" },
@@ -456,14 +462,12 @@ pub const ExprNode = union(enum) {
             .ident,
             .field_access,
             .index_access,
-            .integer,
-            .char,
-            .float,
+            .number,
             .group,
             .func_call,
             => .{ .bin_op = &.{
                 .lhs = base,
-                .op = util.dedupe.scalarSlice(u8, op[0..].*),
+                .op = op,
                 .rhs = .null,
             } },
 
@@ -474,14 +478,12 @@ pub const ExprNode = union(enum) {
                 .ident,
                 .field_access,
                 .index_access,
-                .integer,
-                .char,
-                .float,
+                .number,
                 .group,
                 .func_call,
                 => .{ .bin_op = &.{
                     .lhs = base,
-                    .op = util.dedupe.scalarSlice(u8, op[0..].*),
+                    .op = op,
                     .rhs = .null,
                 } },
 
@@ -493,12 +495,16 @@ pub const ExprNode = union(enum) {
                 .null => .{ .err = "Unexpected token '" ++ op ++ "'" },
                 .err => base,
 
+                .bin_op, .un_op => .{ .bin_op = &.{
+                    .lhs = bin.lhs,
+                    .op = bin.op,
+                    .rhs = bin.rhs.concatBinOp(op, relations),
+                } },
+
                 .ident,
                 .field_access,
                 .index_access,
-                .integer,
-                .char,
-                .float,
+                .number,
                 .group,
                 .func_call,
                 => blk: {
@@ -521,70 +527,98 @@ pub const ExprNode = union(enum) {
                             .op = bin.op,
                             .rhs = .{ .bin_op = &.{
                                 .lhs = bin.rhs,
-                                .op = util.dedupe.scalarSlice(u8, op[0..].*),
+                                .op = op,
                                 .rhs = .null,
                             } },
                         } };
                     }
                     break :blk .{ .bin_op = &.{
                         .lhs = base,
-                        .op = util.dedupe.scalarSlice(u8, op[0..].*),
+                        .op = op,
                         .rhs = .null,
                     } };
                 },
-                .bin_op, .un_op => .{ .bin_op = &.{
-                    .lhs = bin.lhs,
-                    .op = bin.op,
-                    .rhs = bin.rhs.concatBinOp(op, relations),
-                } },
             },
         };
     }
-    inline fn concatExpr(comptime base: ExprNode, comptime new: ExprNode) ExprNode {
+    inline fn concatIdent(comptime base: ExprNode, comptime ident: []const u8) ExprNode {
         return switch (base) {
-            .null => new,
-            .err => |err| switch (new) {
-                .err => |err2| .{ .err = err ++ "\n" ++ err2 },
-                else => base,
-            },
+            .null => .{ .ident = ident },
+            .err => base,
 
             .ident,
             .field_access,
             .index_access,
-            .integer,
-            .char,
-            .float,
+            .number,
             .group,
             .func_call,
-            => .{ .err = std.fmt.comptimePrint("Unexpected token '{}'", .{new.fmt(.{})}) },
+            => .{ .err = std.fmt.comptimePrint("Unexpected token '{s}'", .{ident}) },
 
             .bin_op => |bin| switch (bin.rhs) {
                 .null => .{ .bin_op = &.{
                     .lhs = bin.lhs,
                     .op = bin.op,
-                    .rhs = new,
+                    .rhs = .{ .ident = ident },
                 } },
                 .err => base,
 
                 .ident,
                 .field_access,
                 .index_access,
-                .integer,
-                .char,
-                .float,
+                .number,
                 .group,
                 .func_call,
-                => .{ .err = std.fmt.comptimePrint("Unexpected token '{}'", .{new.fmt()}) },
+                => .{ .err = std.fmt.comptimePrint("Unexpected token '{s}'", .{ident}) },
 
                 .bin_op,
                 .un_op,
                 => .{ .bin_op = &.{
                     .lhs = bin.lhs,
                     .op = bin.op,
-                    .rhs = bin.rhs.concatExpr(new),
+                    .rhs = bin.rhs.concatIdent(ident),
                 } },
             },
-            .un_op => |un| un.insertExprAsInnerTarget(new),
+            .un_op => |un| un.insertExprAsInnerTarget(.{ .ident = ident }),
+        };
+    }
+    inline fn concatNumber(comptime base: ExprNode, comptime src: []const u8) ExprNode {
+        return switch (base) {
+            .null => .{ .number = src },
+            .err => base,
+
+            .ident,
+            .field_access,
+            .index_access,
+            .number,
+            .group,
+            .func_call,
+            => .{ .err = std.fmt.comptimePrint("Unexpected token '{s}'", .{src}) },
+
+            .un_op => |un| un.insertExprAsInnerTarget(.{ .number = src }),
+            .bin_op => |bin| switch (bin.rhs) {
+                .null => .{ .bin_op = &.{
+                    .lhs = bin.lhs,
+                    .op = bin.op,
+                    .rhs = .{ .number = src },
+                } },
+                .err => base,
+
+                .ident,
+                .field_access,
+                .index_access,
+                .number,
+                .group,
+                .func_call,
+                => .{ .err = std.fmt.comptimePrint("Unexpected token '{s}'", .{src}) },
+
+                .bin_op,
+                .un_op,
+                => .{ .bin_op = &.{
+                    .lhs = bin.lhs,
+                    .op = bin.op,
+                    .rhs = bin.rhs.concatNumber(src),
+                } },
+            },
         };
     }
     inline fn concatFunctionArgsOrJustGroup(comptime base: ExprNode, comptime delimiter: enum { paren, bracket }, comptime args: []const ExprNode) ExprNode {
@@ -597,9 +631,7 @@ pub const ExprNode = union(enum) {
 
             .ident,
             .field_access,
-            .integer,
-            .char,
-            .float,
+            .number,
             .group,
             .index_access,
             .func_call,
@@ -628,9 +660,7 @@ pub const ExprNode = union(enum) {
         return switch (base) {
             .null => .{ .err = "Unexpected token '." ++ field ++ "'" },
             .err => base,
-            .integer,
-            .char,
-            .float,
+            .number,
             .ident,
             .field_access,
             .index_access,
@@ -638,7 +668,7 @@ pub const ExprNode = union(enum) {
             .func_call,
             => .{ .field_access = &.{
                 .accessed = base,
-                .accessor = util.dedupe.scalarSlice(u8, field[0..].*),
+                .accessor = field,
             } },
             .bin_op => |bin| .{ .bin_op = &.{
                 .lhs = bin.lhs,
@@ -655,24 +685,10 @@ pub const ExprNode = union(enum) {
     const FieldAccess = struct {
         accessed: ExprNode,
         accessor: []const u8,
-
-        inline fn dedupe(comptime fa: FieldAccess) FieldAccess {
-            return .{
-                .accessed = fa.accessed.dedupe(),
-                .accessor = util.dedupeSlice(u8, fa.accessor),
-            };
-        }
     };
     const IndexAccess = struct {
         accessed: ExprNode,
         accessor: []const ExprNode,
-
-        inline fn dedupe(comptime ia: IndexAccess) IndexAccess {
-            return .{
-                .accessed = ia.accessed.dedupe(),
-                .accessor = ia.accessor.dedupe(),
-            };
-        }
     };
     pub const FuncCall = struct {
         callee: ExprNode,
@@ -713,7 +729,7 @@ pub const ExprNode = union(enum) {
                 .null => return .{
                     .op = un.op,
                     .val = .{ .un_op = &.{
-                        .op = util.dedupe.scalarSlice(u8, op[0..].*),
+                        .op = op,
                         .val = .null,
                     } },
                 },
@@ -777,9 +793,7 @@ pub const ExprNode = union(enum) {
                     args = args ++ ")";
                     break :args args;
                 },
-                .integer => |int| std.fmt.comptimePrint("{d}", .{int}),
-                .char => |char| std.fmt.comptimePrint("'{u}'", .{@intFromEnum(char)}),
-                .float => |num| std.fmt.comptimePrint(num.src),
+                .number => |src| src,
                 .group => |group| std.fmt.comptimePrint("({})", .{group.fmt(formatter.config)}),
                 .bin_op => |bin_op| std.fmt.comptimePrint("{} {s} {}", .{ bin_op.lhs.fmt(formatter.config), bin_op.op, bin_op.rhs.fmt(formatter.config) }),
                 .un_op => |un_op| std.fmt.comptimePrint("{s}{}", .{ un_op.op, un_op.val.fmt(formatter.config) }),

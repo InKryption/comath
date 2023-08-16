@@ -24,10 +24,7 @@ pub const Token = union(enum) {
     ident: []const u8,
     /// '.' field
     field: []const u8,
-    integer: comptime_int,
-    char: comptime_int,
-    float: []const u8,
-
+    number: []const u8,
     op_symbols: []const u8,
 
     /// ','
@@ -41,33 +38,6 @@ pub const Token = union(enum) {
     /// ']'
     bracket_close,
 };
-
-pub inline fn fullTokenize(comptime buffer: []const u8) []const Token {
-    comptime {
-        var normalized: []const u8 = &util.replaceAnyWithScalarComptime(
-            u8,
-            util.dedupe.scalarSlice(u8, buffer[0..].*),
-            util.dedupe.scalarSlice(u8, std.ascii.whitespace),
-            ' ',
-        );
-        normalized = util.trimScalarComptime(u8, normalized, ' ', .both);
-        return util.dedupe.scalarSlice(Token, fullTokenizeImpl(normalized)[0..].*);
-    }
-}
-
-fn fullTokenizeImpl(comptime buffer: []const u8) []const Token {
-    var result: []const Token = &.{};
-
-    @setEvalBranchQuota(buffer.len + buffer.len / 2);
-    var tokenizer = Tokenizer{};
-    while (true) {
-        const tok = tokenizer.next(buffer);
-        if (tok == .eof) break;
-        result = result ++ &[_]Token{tok};
-    }
-
-    return result;
-}
 
 pub inline fn next(
     comptime tokenizer: *Tokenizer,
@@ -134,37 +104,18 @@ fn peekImpl(
                 .token = .{ .field = ident },
             };
         },
-        '0'...'9', '\'' => {
-            var idx = tokenizer.index;
-            @setEvalBranchQuota(@min(std.math.maxInt(u32), (buffer.len - idx) * 100));
-            var zig_tokenizer = std.zig.Tokenizer.init(buffer[idx..] ++ &[_:0]u8{});
-            const tok = zig_tokenizer.next();
+        '0'...'9' => {
+            const start = tokenizer.index;
+            @setEvalBranchQuota(@min(std.math.maxInt(u32), (buffer.len - start) * 100));
+            var zig_tokenizer = std.zig.Tokenizer.init(buffer[start..] ++ &[_:0]u8{});
+            const zig_tok = zig_tokenizer.next();
 
-            const literal_src = util.dedupe.scalarSlice(u8, buffer[idx..][tok.loc.start..tok.loc.end].*);
-            idx += literal_src.len;
+            assert(zig_tok.loc.start == 0);
+            const literal_src = util.dedupe.scalarSlice(u8, buffer[start..][zig_tok.loc.start..zig_tok.loc.end].*);
 
-            @setEvalBranchQuota(@min(std.math.maxInt(u32), buffer.len - idx));
-            const literal_tok: Token = switch (tok.tag) {
-                .char_literal => Token{ .char = parseCharLiteral(literal_src[0..].*) },
-                .number_literal => switch (std.zig.parseNumberLiteral(literal_src)) {
-                    .int => |int| Token{ .integer = int },
-                    .big_int => |base| Token{ .integer = blk: {
-                        const digits = literal_src[if (base == .decimal) 0 else 2..].*;
-                        break :blk util.parseComptimeInt(@intFromEnum(base), digits) catch |err| @compileError(
-                            "Encountered '" ++ @errorName(err) ++ "' while parsing '" ++ literal_src ++ "'",
-                        );
-                    } },
-                    .float => Token{ .float = literal_src },
-                    .failure => |failure| handleNumberParseFailure(literal_src, failure),
-                },
-                else => @compileError( //
-                    "Unexpected token '" ++ literal_src ++ //
-                    "' with tag '" ++ @tagName(tok.tag) ++ "'" //
-                ),
-            };
             return .{
-                .state = .{ .index = idx },
-                .token = literal_tok,
+                .state = .{ .index = start + literal_src.len },
+                .token = .{ .number = literal_src },
             };
         },
         else => |first_byte| {
@@ -195,15 +146,15 @@ fn testTokenizer(
 
 test Tokenizer {
     try testTokenizer(
-        \\~      3.0    +       3     -
-        \\-      !      (       'a'   ]
-        \\*      )      /       [     ]
-        \\^      ]      |     a_b_C   %
+        \\~      3.0    +   3       -
+        \\-      !      (   0b1a1   ]
+        \\*      )      /   [       ]
+        \\^      ]      |   a_b_C   %
         \\.foo   .b@r   .?
     ,
         &.{
-            .{ .op_symbols = "~" }, .{ .float = "3.0" },      .{ .op_symbols = "+" }, .{ .integer = 3 },       .{ .op_symbols = "-" },
-            .{ .op_symbols = "-" }, .{ .op_symbols = "!" },   .{ .paren_open = {} },  .{ .char = 'a' },        .{ .bracket_close = {} },
+            .{ .op_symbols = "~" }, .{ .number = "3.0" },     .{ .op_symbols = "+" }, .{ .number = "3" },      .{ .op_symbols = "-" },
+            .{ .op_symbols = "-" }, .{ .op_symbols = "!" },   .{ .paren_open = {} },  .{ .number = "0b1a1" },  .{ .bracket_close = {} },
             .{ .op_symbols = "*" }, .{ .paren_close = {} },   .{ .op_symbols = "/" }, .{ .bracket_open = {} }, .{ .bracket_close = {} },
             .{ .op_symbols = "^" }, .{ .bracket_close = {} }, .{ .op_symbols = "|" }, .{ .ident = "a_b_C" },   .{ .op_symbols = "%" },
             .{ .field = "foo" },    .{ .field = "b@r" },      .{ .field = "?" },
@@ -214,11 +165,11 @@ test Tokenizer {
         .paren_open,
         .{ .ident = "x" },
         .{ .op_symbols = "-" },
-        .{ .integer = 2 },
+        .{ .number = "2" },
         .paren_close,
         .{ .op_symbols = "*" },
         .paren_open,
-        .{ .integer = 3 },
+        .{ .number = "3" },
         .{ .op_symbols = "+" },
         .{ .op_symbols = "~" },
         .{ .ident = "y" },
@@ -228,87 +179,12 @@ test Tokenizer {
     try testTokenizer("x+-3", &.{
         .{ .ident = "x" },
         .{ .op_symbols = "+-" },
-        .{ .integer = 3 },
+        .{ .number = "3" },
     });
     try testTokenizer("x+ -3", &.{
         .{ .ident = "x" },
         .{ .op_symbols = "+" },
         .{ .op_symbols = "-" },
-        .{ .integer = 3 },
+        .{ .number = "3" },
     });
-}
-
-inline fn handleStringParseFailure(char_src: []const u8, failure: std.zig.string_literal.Error) noreturn {
-    switch (failure) {
-        .invalid_escape_character => |idx| @compileError(std.fmt.comptimePrint(
-            "Unrecognized escape character '{c}' in {s}",
-            .{ char_src[idx], char_src },
-        )),
-        .expected_hex_digit => |idx| @compileError(std.fmt.comptimePrint(
-            "Expected hex digit, got '{c}' in {s}",
-            .{ char_src[idx], char_src },
-        )),
-        .empty_unicode_escape_sequence => @compileError("Found empty unicode escape sequence in " ++ char_src),
-        .expected_hex_digit_or_rbrace => |idx| @compileError(std.fmt.comptimePrint(
-            "Expected hex digit or rbrace, found '{c}' in {s}",
-            .{ char_src[idx], char_src },
-        )),
-        .invalid_unicode_codepoint => @compileError("Invalid unicode codepoint in " ++ char_src),
-        .expected_lbrace => |idx| @compileError(std.fmt.comptimePrint(
-            "Expected lbrace, found '{c}' in {s}",
-            .{ char_src[idx], char_src },
-        )),
-        .expected_rbrace => |idx| @compileError(std.fmt.comptimePrint(
-            "Expected rbrace, found '{c}' in {s}",
-            .{ char_src[idx], char_src },
-        )),
-        .expected_single_quote => @compileError("Unescaped single quote in " ++ char_src),
-        .invalid_character => |idx| @compileError(std.fmt.comptimePrint(
-            "Invalid character '{c}' in {s}",
-            .{ char_src[idx], char_src },
-        )),
-    }
-}
-
-inline fn handleNumberParseFailure(num_src: []const u8, failure: std.zig.number_literal.Error) noreturn {
-    switch (failure) {
-        .leading_zero => @compileError("Invalid leading zeroes in '" ++ num_src ++ "'"),
-        .digit_after_base => @compileError("Expected digit after base in '" ++ num_src ++ "'"),
-        .upper_case_base, .invalid_float_base => @compileError("Invalid base in '" ++ num_src ++ "'"),
-        .repeated_underscore, .invalid_underscore_after_special => @compileError("Invalid underscore in '" ++ num_src ++ "'"),
-        .invalid_digit => |info| @compileError(std.fmt.comptimePrint(
-            "Invalid digit '{c}' in '{s}' with base '{s}'",
-            .{ num_src[info.i], num_src, @tagName(info.base) },
-        )),
-        .invalid_digit_exponent => |exp_idx| @compileError(std.fmt.comptimePrint(
-            "Invalid exponent '{c}' in '{s}'",
-            .{ num_src[exp_idx], num_src },
-        )),
-        .duplicate_period => @compileError("Duplicate periods in '" ++ num_src ++ "'"),
-        .duplicate_exponent => @compileError("Duplicate exponents in '" ++ num_src ++ "'"),
-        .exponent_after_underscore => @compileError("Exponent after underscore in '" ++ num_src ++ "'"),
-        .special_after_underscore => |spec_idx| @compileError(std.fmt.comptimePrint(
-            "Invalid '{c}' after underscore in '{s}'",
-            .{ num_src[spec_idx], num_src },
-        )),
-        .trailing_special,
-        .trailing_underscore,
-        .invalid_character,
-        .invalid_exponent_sign,
-        => |err_idx| @compileError(std.fmt.comptimePrint(
-            "Invalid '{c}' in '{s}'",
-            .{ num_src[err_idx], num_src },
-        )),
-    }
-}
-
-inline fn parseCharLiteral(comptime char_src: anytype) comptime_int {
-    assert(@TypeOf(char_src) == [char_src.len]u8);
-    assert('\'' == char_src[0]);
-    assert('\'' == char_src[char_src.len - 1]);
-    if (char_src.len < 3) @compileError("Invalid empty character '" ++ &char_src ++ "'");
-    return switch (std.zig.parseCharLiteral(&char_src)) {
-        .success => |codepoint| codepoint,
-        .failure => |failure| handleStringParseFailure(&char_src, failure),
-    };
 }

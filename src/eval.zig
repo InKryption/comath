@@ -1,13 +1,13 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const comath = @import("main.zig");
 const util = @import("util");
 const Tokenizer = @import("Tokenizer.zig");
 const parse = @import("parse.zig");
 
 const operator = @import("operator.zig");
-const Char = parse.Char;
-const Number = parse.Number;
+const Number = @import("main.zig").Number;
 
 /// Evaluates `expr` as an expression, wherein the operations are defined
 /// by `ctx`, and the values of variables may be set via `inputs`.
@@ -54,6 +54,10 @@ const Number = parse.Number;
 ///         each with a value of type `operator.Relation` describing the binary operator's precedence
 ///         level and associativity.
 ///
+///     + `EvalNumberLiteral: fn (comptime src: []const u8) type`
+///     + `evalNumberLiteral: fn (comptime src: []const u8) EvalNumberLiteral(src)`
+///         Returns the value that should be used to represent a number literal.
+///
 ///     + `EvalProperty: fn (comptime Lhs: type, comptime field: []const u8) type`
 ///     + `evalProperty: fn (ctx: @This(), lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field)`
 ///         Returns the value that should result from an expression `lhs.field`.
@@ -76,8 +80,8 @@ const Number = parse.Number;
 ///     + `evalBinOp: fn (ctx: @This(), lhs: anytype, comptime op: BinOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs))`
 ///         Returns the value that should result from an expression `lhs op rhs`.
 ///
-/// Important to note that in order to work with character and float literals, the implementations of the
-/// functions listed above must account for `comath.Char` and `comath.Number`, respectively.
+/// Important to note that in order to work with number literals, the implementations of the
+/// functions listed above must account for `comath.Number`.
 ///
 /// * `inputs`:
 /// a non-tuple struct literal whose field names correspond to identifiers in the `expr` source code
@@ -171,9 +175,7 @@ fn EvalImpl(
         .null => noreturn,
         .err => noreturn,
         .ident => |ident| std.meta.FieldType(Inputs, @field(std.meta.FieldEnum(Inputs), ident)),
-        .integer => comptime_int,
-        .char => Char,
-        .float => Number,
+        .number => |number| Ns.EvalNumberLiteral(number),
         .group => |group| EvalImpl(group.*, Ctx, Inputs),
         .field_access => |fa| blk: {
             const Lhs = EvalImpl(fa.accessed, Ctx, Inputs);
@@ -267,9 +269,7 @@ inline fn evalImpl(
         .err => |err| @compileError(err),
 
         .ident => |ident| @field(inputs, ident),
-        .integer => |int| int,
-        .char => |char| char,
-        .float => |num| num,
+        .number => |number| Ns.evalNumberLiteral(number),
         .group => |group| evalImpl(group.*, ctx, inputs),
         .field_access => |fa| blk: {
             const Lhs = EvalImpl(fa.accessed, Ns, Inputs);
@@ -329,10 +329,13 @@ test eval {
         pub const BinOp = enum { @"+", @"-", @"*", @"/" };
         pub const relations = .{
             .@"+" = operator.relation(.left, 0),
-            .@"-" = operator.relation(.left, 1),
+            .@"-" = operator.relation(.left, 0),
             .@"*" = operator.relation(.left, 1),
             .@"/" = operator.relation(.left, 1),
         };
+
+        pub const EvalNumberLiteral = comath.contexts.DefaultEvalNumberLiteral;
+        pub const evalNumberLiteral = comath.contexts.defaultEvalNumberLiteral;
 
         pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {
             return std.meta.FieldType(Lhs, @field(std.meta.FieldEnum(Lhs), field));
@@ -395,21 +398,23 @@ test eval {
             };
         }
     };
-    try util.testing.expectEqual(3, eval("x[y]", BasicCtx{}, .{
+    const basic_ctx = BasicCtx{};
+
+    try util.testing.expectEqual(3, eval("x[y]", basic_ctx, .{
         .x = [3]u16{ 0, 3, 7 },
         .y = 1,
     }));
-    try util.testing.expectEqual(.{ 1, 2, 3 }, eval("x + y", BasicCtx{}, .{
+    try util.testing.expectEqual(.{ 1, 2, 3 }, eval("x + y", basic_ctx, .{
         .x = std.simd.iota(u8, 3),
         .y = @as(@Vector(3, u8), @splat(1)),
     }));
-    try util.testing.expectEqual(-4, eval("-4", BasicCtx{}, .{}));
-    try util.testing.expectEqual(7, eval("a + 3", BasicCtx{}, .{ .a = 4 }));
-    try util.testing.expectEqual(2, eval("a / 2", BasicCtx{}, .{ .a = 4 }));
-    try util.testing.expectEqual(12, eval("(y + 2) * x", BasicCtx{}, .{ .y = 2, .x = 3 }));
-    try util.testing.expectEqual(8, eval("y + 2 * x", BasicCtx{}, .{ .y = 2, .x = 3 }));
-    try util.testing.expectEqual(3, eval("a.b", BasicCtx{}, .{ .a = .{ .b = 3 } }));
-    try util.testing.expectEqual(6, eval("a / b / c", BasicCtx{}, .{ .a = 24, .b = 2, .c = 2 }));
+    try util.testing.expectEqual(-4, eval("-4", basic_ctx, .{}));
+    try util.testing.expectEqual(7, eval("a + 3", basic_ctx, .{ .a = 4 }));
+    try util.testing.expectEqual(2, eval("a / 2", basic_ctx, .{ .a = 4 }));
+    try util.testing.expectEqual(12, eval("(y + 2) * x", basic_ctx, .{ .y = 2, .x = 3 }));
+    try util.testing.expectEqual(8, eval("y + 2 * x", basic_ctx, .{ .y = 2, .x = 3 }));
+    try util.testing.expectEqual(3, eval("a.b", basic_ctx, .{ .a = .{ .b = 3 } }));
+    try util.testing.expectEqual(6, eval("a / b / c", basic_ctx, .{ .a = 24, .b = 2, .c = 2 }));
 
     const test_fns = struct {
         // zig fmt: off
@@ -418,20 +423,23 @@ test eval {
         inline fn sub(a: i32, b: i32) u32 { return a - b; }
         // zig fmt: on
     };
-    try util.testing.expectEqual(15, eval("get15()", BasicCtx{}, .{ .get15 = test_fns.get15 }));
-    try util.testing.expectEqual(16, eval("addOne(15)", BasicCtx{}, .{ .addOne = test_fns.addOne }));
-    try util.testing.expectEqual(17, eval("sub(19, 2)", BasicCtx{}, .{ .sub = test_fns.sub }));
+    try util.testing.expectEqual(15, eval("get15()", basic_ctx, .{ .get15 = test_fns.get15 }));
+    try util.testing.expectEqual(16, eval("addOne(15)", basic_ctx, .{ .addOne = test_fns.addOne }));
+    try util.testing.expectEqual(17, eval("sub(19, 2)", basic_ctx, .{ .sub = test_fns.sub }));
 
-    try util.testing.expectEqual(30, eval("2 * get15()", BasicCtx{}, .{ .get15 = test_fns.get15 }));
-    try util.testing.expectEqual(-45, eval("(3 * -get15())", BasicCtx{}, .{ .get15 = test_fns.get15 }));
+    try util.testing.expectEqual(30, eval("2 * get15()", basic_ctx, .{ .get15 = test_fns.get15 }));
+    try util.testing.expectEqual(-45, eval("(3 * -get15())", basic_ctx, .{ .get15 = test_fns.get15 }));
 
-    try util.testing.expectEqual([_]u8{ 'a', 'b', 'c' }, eval("a[0, 2, 4]", BasicCtx{}, .{ .a = "a b c" }));
+    try util.testing.expectEqual([_]u8{ 'a', 'b', 'c' }, eval("a[0, 2, 4]", basic_ctx, .{ .a = "a b c" }));
 
     const PowCtx = struct {
         pub const BinOp = enum { @"^" };
         pub const relations: operator.RelationMap(BinOp) = .{
             .@"^" = .{ .prec = 0, .assoc = .right },
         };
+
+        pub const EvalNumberLiteral = BasicCtx.EvalNumberLiteral;
+        pub const evalNumberLiteral = BasicCtx.evalNumberLiteral;
 
         pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {
             _ = op;
