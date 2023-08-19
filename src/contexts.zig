@@ -353,15 +353,6 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
     };
 }
 
-test {
-    if (true) {
-        std.log.err("{s}:{d}:{d}: TODO: Resurrect this test", .{ @src().file, @src().line, @src().column });
-        return error.SkipZigTest;
-    } else {
-        try util.testing.expectEqual(6 - 3 + 4 + 2, comath.eval("6*1-3*1+4*1+2", simpleCtx({}), .{}));
-    }
-}
-
 test simpleCtx {
     try util.testing.expectEqual(5, comath.eval("a + b", simpleCtx({}), .{ .a = 2, .b = 3 }));
     try util.testing.expectEqual(1, comath.eval("a +% b", simpleCtx({}), .{ .a = @as(u8, std.math.maxInt(u8)), .b = 2 }));
@@ -376,6 +367,9 @@ test simpleCtx {
         .b = [2][3]u16{ .{ 1, 2, 4 }, .{ 2, 3, 6 } },
         .c = [2][2]u16{ .{ 8, 2 }, .{ 3, 6 } },
     }));
+
+    // complex precedence interactions
+    try util.testing.expectEqual(6 - 3 + 4 + 2, comath.eval("6*1-3*1+4*1+2", simpleCtx({}), .{}));
 
     const op_override_ctx = simpleCtx(struct {
         pub const UnOp = enum { @"++" };
