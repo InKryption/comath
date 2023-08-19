@@ -190,31 +190,26 @@ test parseExpr {
     try Tester.expectEqual("foo (", err("Missing closing parentheses"));
     try Tester.expectEqual("foo (a,", err("Missing closing parentheses"));
 
-    if (true) {
-        std.log.err("{s}:{d}:{d}: TODO: Resurrect this test", .{ @src().file, @src().line, @src().column });
-        return error.SkipZigTest;
-    } else {
-        try Tester.expectEqual(
-            "6*1-3*1+4*1+2",
+    try Tester.expectEqual(
+        "6*1-3*1+4*1+2",
+        binOp(
             binOp(
                 binOp(
-                    binOp(
-                        binOp(number("6"), "*", number("1")),
-                        "-",
-                        binOp(number("3"), "*", number("1")),
-                    ),
-                    "+",
-                    binOp(
-                        number("4"),
-                        "*",
-                        number("1"),
-                    ),
+                    binOp(number("6"), "*", number("1")),
+                    "-",
+                    binOp(number("3"), "*", number("1")),
                 ),
                 "+",
-                number("2"),
+                binOp(
+                    number("4"),
+                    "*",
+                    number("1"),
+                ),
             ),
-        );
-    }
+            "+",
+            number("2"),
+        ),
+    );
 }
 
 const NestType = enum(comptime_int) { none, paren, bracket };
@@ -465,15 +460,37 @@ pub const ExprNode = union(enum(comptime_int)) {
             .number,
             .group,
             .func_call,
+            .un_op,
             => .{ .bin_op = &.{
                 .lhs = base,
                 .op = op,
                 .rhs = .null,
             } },
 
-            .un_op => |un| switch (un.val) {
+            .bin_op => |lhs_bin| switch (lhs_bin.rhs) {
                 .null => .{ .err = "Unexpected token '" ++ op ++ "'" },
                 .err => base,
+
+                .bin_op => |mid_bin| blk: {
+                    const lhs_rel: operator.Relation = @as(?operator.Relation, @field(relations, lhs_bin.op)) orelse return .{ .err = "Missing relationship definition for operator '" ++ lhs_bin.op ++ "'" };
+                    const mid_rel: operator.Relation = @as(?operator.Relation, @field(relations, mid_bin.op)) orelse return .{ .err = "Missing relationship definition for operator '" ++ mid_bin.op ++ "'" };
+                    const rhs_rel: operator.Relation = @as(?operator.Relation, @field(relations, op)) orelse return .{ .err = "Missing relationship definition for operator '" ++ op ++ "'" };
+                    if (lhs_rel.order(mid_rel) != .lt) unreachable;
+
+                    break :blk switch (mid_rel.order(rhs_rel)) {
+                        .incompatible => .{ .err = lhs_bin.op ++ " cannot be chained with " ++ op },
+                        .lt => .{ .bin_op = &.{
+                            .lhs = lhs_bin.lhs,
+                            .op = lhs_bin.op,
+                            .rhs = lhs_bin.rhs.concatBinOp(op, relations),
+                        } },
+                        .gt => .{ .bin_op = &.{
+                            .lhs = base,
+                            .op = op,
+                            .rhs = .null,
+                        } },
+                    };
+                },
 
                 .ident,
                 .field_access,
@@ -481,52 +498,27 @@ pub const ExprNode = union(enum(comptime_int)) {
                 .number,
                 .group,
                 .func_call,
-                => .{ .bin_op = &.{
-                    .lhs = base,
-                    .op = op,
-                    .rhs = .null,
-                } },
-
-                .bin_op => unreachable,
-                .un_op => unreachable,
-            },
-
-            .bin_op => |bin| switch (bin.rhs) {
-                .null => .{ .err = "Unexpected token '" ++ op ++ "'" },
-                .err => base,
-
-                .bin_op, .un_op => .{ .bin_op = &.{
-                    .lhs = bin.lhs,
-                    .op = bin.op,
-                    .rhs = bin.rhs.concatBinOp(op, relations),
-                } },
-
-                .ident,
-                .field_access,
-                .index_access,
-                .number,
-                .group,
-                .func_call,
+                .un_op,
                 => blk: {
                     const relation_map = switch (@typeInfo(@TypeOf(relations))) {
                         .Optional => relations orelse .{},
                         .Null => .{},
                         else => relations,
                     };
-                    const lhs_rel: operator.Relation = @as(?operator.Relation, @field(relation_map, bin.op)) orelse return .{ .err = "Missing relationship definition for operator '" ++ bin.op ++ "'" };
+                    const lhs_rel: operator.Relation = @as(?operator.Relation, @field(relation_map, lhs_bin.op)) orelse return .{ .err = "Missing relationship definition for operator '" ++ lhs_bin.op ++ "'" };
                     const rhs_rel: operator.Relation = @as(?operator.Relation, @field(relation_map, op)) orelse return .{ .err = "Missing relationship definition for operator '" ++ op ++ "'" };
 
                     if (lhs_rel.prec == rhs_rel.prec and lhs_rel.assoc != rhs_rel.assoc) {
-                        return .{ .err = bin.op ++ " cannot be chained with " ++ op };
+                        return .{ .err = lhs_bin.op ++ " cannot be chained with " ++ op };
                     }
                     if (lhs_rel.prec < rhs_rel.prec or
                         (lhs_rel.prec == rhs_rel.prec and lhs_rel.assoc == .right))
                     {
                         break :blk .{ .bin_op = &.{
-                            .lhs = bin.lhs,
-                            .op = bin.op,
+                            .lhs = lhs_bin.lhs,
+                            .op = lhs_bin.op,
                             .rhs = .{ .bin_op = &.{
-                                .lhs = bin.rhs,
+                                .lhs = lhs_bin.rhs,
                                 .op = op,
                                 .rhs = .null,
                             } },
