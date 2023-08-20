@@ -69,41 +69,13 @@ inline fn stringifyNumberParseFailure(
     }
 }
 
-pub fn DefaultNumberLiteralCtx(comptime SubCtx: type) type {
-    return struct {
-        sub_ctx: SubCtx,
-        const Self = @This();
-
-        pub const allow_unused_inputs = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
-
-        pub const UnOp = if (!@hasDecl(Ns, "UnOp")) SimpleUnOp else operator.OpEnumUnion(SimpleUnOp, Ns.UnOp);
-        pub const BinOp = if (!@hasDecl(Ns, "BinOp")) SimpleBinOp else operator.OpEnumUnion(SimpleBinOp, Ns.BinOp);
-        pub const relations: operator.RelationMap(BinOp) = if (!@hasDecl(Ns, "relations"))
-            simple_relations // if this issues an error about missing fields, you need to specify the relations of your custom operators in your SubCtx
-        else blk: {
-            var relations_map: operator.RelationMap(BinOp) = undefined;
-            for (@typeInfo(@TypeOf(relations_map)).Struct.fields) |field| {
-                const overriden = @hasField(Ns.BinOp, field.name) and @hasField(@TypeOf(Ns.relations), field.name);
-                const source = if (overriden) Ns.relations else simple_relations;
-                @field(relations_map, field.name) = @field(source, field.name);
-            }
-            break :blk relations_map;
-        };
-
-        pub const EvalNumberLiteral = DefaultEvalNumberLiteral;
-        pub const evalNumberLiteral = defaultEvalNumberLiteral;
-
-        const Ns = switch (@typeInfo(SubCtx)) {
-            .Struct, .Union, .Enum => SubCtx,
-            .Pointer => |pointer| if (pointer.size != .One)
-                struct {}
-            else switch (@typeInfo(pointer.child)) {
-                .Struct, .Union, .Enum, .Opaque => pointer.child,
-                else => struct {},
-            },
-            else => struct {},
-        };
-    };
+pub fn DefaultEvalIdent(comptime ident: []const u8) type {
+    _ = ident;
+    return noreturn;
+}
+pub fn defaultEvalIdent(ctx: anytype, comptime ident: []const u8) error{}!DefaultEvalIdent(ident) {
+    _ = ctx;
+    comptime unreachable;
 }
 
 const SimpleUnOp = enum { @"-" };
@@ -165,6 +137,9 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
 
         pub const EvalNumberLiteral = DefaultEvalNumberLiteral;
         pub const evalNumberLiteral = defaultEvalNumberLiteral;
+
+        pub const EvalIdent = comath.contexts.DefaultEvalIdent;
+        pub const evalIdent = comath.contexts.defaultEvalIdent;
 
         pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {
             if (@hasDecl(Ns, "EvalProperty")) {
@@ -440,11 +415,24 @@ pub fn FnMethodCtx(
             }
             return DefaultEvalNumberLiteral(src);
         }
-        pub fn evalNumberLiteral(comptime src: []const u8) EvalNumberLiteral(src) {
+        pub inline fn evalNumberLiteral(comptime src: []const u8) EvalNumberLiteral(src) {
             if (@hasDecl(Ns, "evalNumberLiteral")) {
                 return Ns.evalNumberLiteral(src);
             }
             return defaultEvalNumberLiteral(src);
+        }
+
+        pub fn EvalIdent(comptime ident: []const u8) type {
+            if (@hasDecl(Ns, "EvalIdent")) {
+                return Ns.EvalIdent(ident);
+            }
+            return DefaultEvalIdent(ident);
+        }
+        pub fn evalIdent(comptime ident: []const u8) type {
+            if (@hasDecl(Ns, "EvalIdent")) {
+                return Ns.evalIdent(ident);
+            }
+            return defaultEvalIdent(ident);
         }
 
         pub fn EvalProperty(comptime T: type, comptime field: []const u8) type {

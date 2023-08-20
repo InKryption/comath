@@ -43,6 +43,12 @@ which can be described in pseudo-code as:
     pub fn EvalNumberLiteral(comptime src: []const u8) type {...}
     pub fn evalNumberLiteral(comptime src: []const u8) EvalNumberLiteral(src) {...}
 
+    /// Determines the value and type of identifiers, overriding those which would otherwise be
+    /// determined via the `inputs` struct. `EvalIdent` returning `noreturn` causes
+    /// `eval` to instead look for the identifier in the `inputs` struct.
+    pub fn EvalIdent(comptime ident: []const u8) type {...}
+    pub fn evalIdent(ctx: @This(), comptime ident: []const u8) !EvalIdent(ident) {...}
+
     /// Corresponds to `lhs.field`.
     pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {...}
     pub fn evalProperty(ctx: @This(), lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field) {...}

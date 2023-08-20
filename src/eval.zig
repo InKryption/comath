@@ -58,6 +58,11 @@ const Number = @import("main.zig").Number;
 ///     + `evalNumberLiteral: fn (comptime src: []const u8) EvalNumberLiteral(src)`
 ///         Returns the value that should be used to represent a number literal.
 ///
+///     + `EvalIdent: fn (comptime ident: []const u8) type`
+///     + `evalIdent: fn (ctx: @This(), comptime ident: []const u8) !EvalIdent(ident)`
+///         Returns the value of the identifier. `EvalIdent(ident) = noreturn` will
+///         tell the function to seek the value in the `inputs` struct.
+///
 ///     + `EvalProperty: fn (comptime Lhs: type, comptime field: []const u8) type`
 ///     + `evalProperty: fn (ctx: @This(), lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field)`
 ///         Returns the value that should result from an expression `lhs.field`.
@@ -174,7 +179,12 @@ fn EvalImpl(
     return switch (expr) {
         .null => noreturn,
         .err => noreturn,
-        .ident => |ident| std.meta.FieldType(Inputs, @field(std.meta.FieldEnum(Inputs), ident)),
+        .ident => |ident| blk: {
+            const IdentType = Ns.EvalIdent(ident);
+            if (IdentType != noreturn) break :blk IdentType;
+            const field_tag = @field(std.meta.FieldEnum(Inputs), ident);
+            break :blk std.meta.FieldType(Inputs, field_tag);
+        },
         .number => |number| Ns.EvalNumberLiteral(number),
         .group => |group| EvalImpl(group.*, Ctx, Inputs),
         .field_access => |fa| blk: {
@@ -268,7 +278,11 @@ inline fn evalImpl(
         .null => @compileError("Incomplete AST (encountered null expression)"),
         .err => |err| @compileError(err),
 
-        .ident => |ident| @field(inputs, ident),
+        .ident => |ident| blk: {
+            const IdentType = Ns.EvalIdent(ident);
+            if (IdentType != noreturn) break :blk ctx.evalIdent(ident);
+            break :blk @field(inputs, ident);
+        },
         .number => |number| Ns.evalNumberLiteral(number),
         .group => |group| evalImpl(group.*, ctx, inputs),
         .field_access => |fa| blk: {
@@ -336,6 +350,15 @@ test eval {
 
         pub const EvalNumberLiteral = comath.contexts.DefaultEvalNumberLiteral;
         pub const evalNumberLiteral = comath.contexts.defaultEvalNumberLiteral;
+
+        pub fn EvalIdent(comptime ident: []const u8) type {
+            _ = ident;
+            return noreturn;
+        }
+        pub fn evalIdent(ctx: @This(), comptime ident: []const u8) !EvalIdent(ident) {
+            _ = ctx;
+            @compileError("Should not be referenced");
+        }
 
         pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {
             return std.meta.FieldType(Lhs, @field(std.meta.FieldEnum(Lhs), field));
@@ -440,6 +463,9 @@ test eval {
 
         pub const EvalNumberLiteral = BasicCtx.EvalNumberLiteral;
         pub const evalNumberLiteral = BasicCtx.evalNumberLiteral;
+
+        pub const EvalIdent = comath.contexts.DefaultEvalIdent;
+        pub const evalIdent = comath.contexts.defaultEvalIdent;
 
         pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {
             _ = op;
