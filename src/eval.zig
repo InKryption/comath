@@ -19,20 +19,24 @@ const Number = @import("main.zig").Number;
 /// ```
 ///   Expr = $Ident | $Integer | $Char | $Float | $Group | $FieldAccess | $IndexAccess | $FuncCall | $UnOp | $BinOp
 ///
-///   Ident = ['A'-'Z' 'a'-'z' '_']['A'-'Z' 'a'-'z' '_' '0'-'9']*
-///   Integer # A zig integer literal
-///   Char    # A zig char literal
-///   Float   # A zig float literal
+///   Ident = $IdentStartSymbol $IdentSymbol*
+///   Integer # String of characters tokenized as a zig integer literal
+///   Float   # String of characters tokenized as a zig float literal
+///
+///   FieldAccess = $Expr '.' ($IdentSymbol|$OperatorSymbol)+
 ///   Group = '(' $Expr ')'
-///   FieldAccess = $Expr '.' ($Ident|$OperatorSymbol)+
-///   IndexAccess = $Expr '[' $ExprList ']'
-///   FuncCall    = $Expr '(' $ExprList ')'
 ///   UnOp = $Operator $Expr
 ///   BinOp = $Expr $Operator $Expr
+///   IndexAccess = $Expr '[' $ExprList ']'
+///   FuncCall    = $Expr '(' $ExprList ')'
 ///
 ///   ExprList = ($Expr ','?)*
+///
 ///   Operator = $OperatorSymbol+
 ///   OperatorSymbol = ['!' '#' '$' '%' '&' '*' '+' '-' '/' '<' '=' '>' '?' '@' '~' '^' '|' ':']
+///
+///   IdentStartSymbol = ['A'-'Z' 'a'-'z' '_']
+///   IdentSymbol = $IdentStartSymbol | ['0'-'9']
 /// ```
 ///
 /// * `ctx`:
@@ -61,7 +65,7 @@ const Number = @import("main.zig").Number;
 ///     + `EvalIdent: fn (comptime ident: []const u8) type`
 ///     + `evalIdent: fn (ctx: @This(), comptime ident: []const u8) !EvalIdent(ident)`
 ///         Returns the value of the identifier. `EvalIdent(ident) = noreturn` will
-///         tell the function to seek the value in the `inputs` struct.
+///         make the function get the value from the `inputs` struct.
 ///
 ///     + `EvalProperty: fn (comptime Lhs: type, comptime field: []const u8) type`
 ///     + `evalProperty: fn (ctx: @This(), lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field)`
@@ -464,8 +468,14 @@ test eval {
         pub const EvalNumberLiteral = BasicCtx.EvalNumberLiteral;
         pub const evalNumberLiteral = BasicCtx.evalNumberLiteral;
 
-        pub const EvalIdent = comath.contexts.DefaultEvalIdent;
-        pub const evalIdent = comath.contexts.defaultEvalIdent;
+        pub fn EvalIdent(comptime ident: []const u8) type {
+            _ = ident;
+            return noreturn;
+        }
+        pub fn evalIdent(ctx: @This(), comptime ident: []const u8) !EvalIdent(ident) {
+            _ = ctx;
+            comptime unreachable;
+        }
 
         pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {
             _ = op;

@@ -30,52 +30,36 @@ pub fn defaultEvalNumberLiteral(comptime src: []const u8) DefaultEvalNumberLiter
             break :blk x;
         },
         .float => std.fmt.parseFloat(f128, src) catch |err| @compileError(@errorName(err)),
-        .failure => |failure| @compileError(stringifyNumberParseFailure(src, failure)),
+        .failure => |failure| @compileError(switch (failure) {
+            .leading_zero => "Invalid leading zeroes in '" ++ src ++ "'",
+            .digit_after_base => "Expected digit after base in '" ++ src ++ "'",
+            .upper_case_base, .invalid_float_base => "Invalid base in '" ++ src ++ "'",
+            .repeated_underscore, .invalid_underscore_after_special => "Invalid underscore in '" ++ src ++ "'",
+            .invalid_digit => |info| std.fmt.comptimePrint(
+                "Invalid digit '{c}' in '{s}' with base '{s}'",
+                .{ src[info.i], src, @tagName(info.base) },
+            ),
+            .invalid_digit_exponent => |exp_idx| std.fmt.comptimePrint(
+                "Invalid exponent '{c}' in '{s}'",
+                .{ src[exp_idx], src },
+            ),
+            .duplicate_period => "Duplicate periods in '" ++ src ++ "'",
+            .duplicate_exponent => "Duplicate exponents in '" ++ src ++ "'",
+            .exponent_after_underscore => "Exponent after underscore in '" ++ src ++ "'",
+            .special_after_underscore => |spec_idx| std.fmt.comptimePrint(
+                "Invalid '{c}' after underscore in '{s}'",
+                .{ src[spec_idx], src },
+            ),
+            .trailing_special,
+            .trailing_underscore,
+            .invalid_character,
+            .invalid_exponent_sign,
+            => |err_idx| std.fmt.comptimePrint(
+                "Invalid '{c}' in '{s}'",
+                .{ src[err_idx], src },
+            ),
+        }),
     };
-}
-
-inline fn stringifyNumberParseFailure(
-    comptime num_src: []const u8,
-    comptime failure: std.zig.number_literal.Error,
-) []const u8 {
-    switch (failure) {
-        .leading_zero => "Invalid leading zeroes in '" ++ num_src ++ "'",
-        .digit_after_base => "Expected digit after base in '" ++ num_src ++ "'",
-        .upper_case_base, .invalid_float_base => "Invalid base in '" ++ num_src ++ "'",
-        .repeated_underscore, .invalid_underscore_after_special => "Invalid underscore in '" ++ num_src ++ "'",
-        .invalid_digit => |info| std.fmt.comptimePrint(
-            "Invalid digit '{c}' in '{s}' with base '{s}'",
-            .{ num_src[info.i], num_src, @tagName(info.base) },
-        ),
-        .invalid_digit_exponent => |exp_idx| std.fmt.comptimePrint(
-            "Invalid exponent '{c}' in '{s}'",
-            .{ num_src[exp_idx], num_src },
-        ),
-        .duplicate_period => "Duplicate periods in '" ++ num_src ++ "'",
-        .duplicate_exponent => "Duplicate exponents in '" ++ num_src ++ "'",
-        .exponent_after_underscore => "Exponent after underscore in '" ++ num_src ++ "'",
-        .special_after_underscore => |spec_idx| std.fmt.comptimePrint(
-            "Invalid '{c}' after underscore in '{s}'",
-            .{ num_src[spec_idx], num_src },
-        ),
-        .trailing_special,
-        .trailing_underscore,
-        .invalid_character,
-        .invalid_exponent_sign,
-        => |err_idx| std.fmt.comptimePrint(
-            "Invalid '{c}' in '{s}'",
-            .{ num_src[err_idx], num_src },
-        ),
-    }
-}
-
-pub fn DefaultEvalIdent(comptime ident: []const u8) type {
-    _ = ident;
-    return noreturn;
-}
-pub fn defaultEvalIdent(ctx: anytype, comptime ident: []const u8) error{}!DefaultEvalIdent(ident) {
-    _ = ctx;
-    comptime unreachable;
 }
 
 const SimpleUnOp = enum { @"-" };
@@ -138,8 +122,22 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
         pub const EvalNumberLiteral = DefaultEvalNumberLiteral;
         pub const evalNumberLiteral = defaultEvalNumberLiteral;
 
-        pub const EvalIdent = comath.contexts.DefaultEvalIdent;
-        pub const evalIdent = comath.contexts.defaultEvalIdent;
+        pub fn EvalIdent(comptime ident: []const u8) type {
+            if (@hasDecl(Ns, "EvalIdent")) {
+                if (Ns.EvalIdent(ident) != noreturn) {
+                    return Ns.EvalIdent(ident);
+                }
+            }
+            return noreturn;
+        }
+        pub inline fn evalIdent(ctx: @This(), comptime ident: []const u8) !EvalIdent(ident) {
+            if (@hasDecl(Ns, "EvalIdent")) {
+                if (Ns.EvalIdent(ident) != noreturn) {
+                    return ctx.sub_ctx.evalIdent();
+                }
+            }
+            comptime unreachable;
+        }
 
         pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {
             if (@hasDecl(Ns, "EvalProperty")) {
@@ -426,13 +424,13 @@ pub fn FnMethodCtx(
             if (@hasDecl(Ns, "EvalIdent")) {
                 return Ns.EvalIdent(ident);
             }
-            return DefaultEvalIdent(ident);
+            return noreturn;
         }
         pub fn evalIdent(comptime ident: []const u8) type {
             if (@hasDecl(Ns, "EvalIdent")) {
                 return Ns.evalIdent(ident);
             }
-            return defaultEvalIdent(ident);
+            comptime unreachable;
         }
 
         pub fn EvalProperty(comptime T: type, comptime field: []const u8) type {
