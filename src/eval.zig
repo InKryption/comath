@@ -110,47 +110,24 @@ pub inline fn eval(
         Ns.allow_unused_inputs;
     const Inputs = @TypeOf(inputs);
 
+    const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);
     comptime if (!allow_unused_inputs and @typeInfo(Inputs).Struct.fields.len != 0) {
         const InputTag = util.dedupe.Enum(std.meta.FieldEnum(Inputs));
-        const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);
-        analyzeUnusedInputs(deduped_expr, InputTag) catch |err| @compileError(@errorName(err));
+        const EvalIdent = if (@hasDecl(Ns, "EvalIdent")) Ns.EvalIdent else struct {
+            fn DummyEvalIdent(comptime _: []const u8) type {
+                return noreturn;
+            }
+        }.DummyEvalIdent;
+        analyzeInputs(deduped_expr, InputTag, EvalIdent) catch |err|
+            @compileError(@errorName(err));
     };
     const root = comptime parse.parseExpr(
-        expr,
+        deduped_expr,
         util.namespaceDecl(Ns, "UnOp") orelse null,
         util.namespaceDecl(Ns, "BinOp") orelse null,
         util.namespaceDecl(Ns, "relations") orelse null,
     );
     return evalImpl(root, ctx, inputs);
-}
-inline fn analyzeUnusedInputs(
-    comptime expr: []const u8,
-    comptime InputTag: type,
-) !void {
-    comptime {
-        var unused_set = std.EnumSet(InputTag).initFull();
-        var tokenizer = Tokenizer{};
-        @setEvalBranchQuota(expr.len * 100);
-        while (true) switch (tokenizer.next(expr)) {
-            .eof => break,
-            .ident => |ident| unused_set.remove(@field(InputTag, ident)),
-            else => {},
-        };
-        var err_str: []const u8 = "";
-        var iter = unused_set.iterator();
-        @setEvalBranchQuota(unused_set.count() + 1);
-        while (iter.next()) |unused| {
-            const comma = if (err_str.len == 0) "" else ", ";
-            err_str = comma ++ @tagName(unused);
-        }
-
-        const err_msg_prefix = if (unused_set.count() > 1)
-            "Unused inputs: "
-        else
-            "Unused input: ";
-        if (err_str.len != 0)
-            return @field(anyerror, err_msg_prefix ++ err_str);
-    }
 }
 
 pub fn Eval(
@@ -166,6 +143,57 @@ pub fn Eval(
         util.namespaceDecl(Ns, "relations") orelse null,
     );
     return EvalImpl(root, Ctx, Inputs);
+}
+
+inline fn analyzeInputs(
+    comptime expr: []const u8,
+    comptime InputTag: type,
+    comptime EvalIdent: fn (comptime []const u8) type,
+) !void {
+    comptime {
+        var unused_set = std.EnumSet(InputTag).initFull();
+        var shadow_set = std.EnumSet(InputTag).initEmpty();
+        var tokenizer = Tokenizer{};
+        @setEvalBranchQuota(expr.len * 100);
+        while (true) switch (tokenizer.next(expr)) {
+            .eof => break,
+            .ident => |ident| {
+                const global_ident = EvalIdent(ident) != noreturn;
+                const input_ident = @hasField(InputTag, ident);
+
+                if (input_ident) {
+                    const tag = @field(InputTag, ident);
+                    if (global_ident) shadow_set.insert(tag);
+                    unused_set.remove(tag);
+                }
+            },
+            else => {},
+        };
+
+        var err_str: []const u8 = "";
+
+        for (.{ unused_set, shadow_set }, .{
+            if (unused_set.count() > 1) "Unused inputs: " else "Unused input: ",
+            if (shadow_set.count() > 1) "Inputs shadowing context identifiers: " else "Input shadowing context identifier: ",
+        }) |set, err_msg_prefix| {
+            if (set.count() == 0) continue;
+            err_str = err_str ++ err_msg_prefix;
+
+            var iter = set.iterator();
+            @setEvalBranchQuota(set.count() + 1);
+            var need_comma = false;
+            while (iter.next()) |unused| {
+                const comma = if (need_comma) ", " else "";
+                need_comma = true;
+                err_str = err_str ++ comma ++ @tagName(unused);
+            }
+
+            err_str = err_str ++ "\n";
+        }
+
+        if (err_str.len != 0)
+            return @field(anyerror, err_str);
+    }
 }
 
 fn EvalImpl(
@@ -215,52 +243,6 @@ fn EvalImpl(
             break :blk Ns.EvalBinOp(Lhs, bin.op, Rhs);
         },
     };
-}
-fn EvalExprTupleImpl(
-    comptime list: []const parse.ExprNode,
-    comptime Ctx: type,
-    comptime Inputs: type,
-) type {
-    var fields: [list.len]std.builtin.Type.StructField = undefined;
-    for (&fields, list, 0..) |*field, arg, i| {
-        const T = EvalImpl(arg, Ctx, Inputs);
-        const comptime_only = util.typeIsComptimeOnly(T) orelse @compileError("Cannot have an argument of type " ++ @typeName(T));
-
-        field.* = .{
-            .name = std.fmt.comptimePrint("{d}", .{i}),
-            .type = T,
-            .default_value = if (!comptime_only) null else blk: {
-                const val: T = evalImpl(arg, @as(Ctx, undefined), @as(Inputs, undefined)) catch |err| @compileError(@errorName(err));
-                break :blk &val;
-            },
-            .is_comptime = comptime_only,
-            .alignment = 0,
-        };
-        if (@sizeOf(T) == 0) {
-            field.is_comptime = true;
-            field.default_value = &(evalImpl(arg, @as(Ctx, undefined), @as(Inputs, undefined)) catch |err| @compileError(@errorName(err)));
-        }
-    }
-    return @Type(.{ .Struct = .{
-        .layout = .Auto,
-        .decls = &.{},
-        .is_tuple = true,
-        .fields = &fields,
-    } });
-}
-fn evalExprTupleImpl(
-    comptime list: []const parse.ExprNode,
-    ctx: anytype,
-    inputs: anytype,
-) !EvalExprTupleImpl(list, @TypeOf(ctx), @TypeOf(inputs)) {
-    const Tuple = EvalExprTupleImpl(list, @TypeOf(ctx), @TypeOf(inputs));
-    var args: Tuple = undefined;
-    @setEvalBranchQuota(args.len * 2);
-    inline for (list, 0..) |arg, i| {
-        if (@typeInfo(Tuple).Struct.fields[i].is_comptime) continue;
-        args[i] = try evalImpl(arg, ctx, inputs);
-    }
-    return args;
 }
 
 inline fn evalImpl(
@@ -339,6 +321,53 @@ inline fn evalImpl(
             break :blk ctx.evalBinOp(lhs, bin.op, rhs);
         },
     };
+}
+
+fn EvalExprTupleImpl(
+    comptime list: []const parse.ExprNode,
+    comptime Ctx: type,
+    comptime Inputs: type,
+) type {
+    var fields: [list.len]std.builtin.Type.StructField = undefined;
+    for (&fields, list, 0..) |*field, arg, i| {
+        const T = EvalImpl(arg, Ctx, Inputs);
+        const comptime_only = util.typeIsComptimeOnly(T) orelse @compileError("Cannot have an argument of type " ++ @typeName(T));
+
+        field.* = .{
+            .name = std.fmt.comptimePrint("{d}", .{i}),
+            .type = T,
+            .default_value = if (!comptime_only) null else blk: {
+                const val: T = evalImpl(arg, @as(Ctx, undefined), @as(Inputs, undefined)) catch |err| @compileError(@errorName(err));
+                break :blk &val;
+            },
+            .is_comptime = comptime_only,
+            .alignment = 0,
+        };
+        if (@sizeOf(T) == 0) {
+            field.is_comptime = true;
+            field.default_value = &(evalImpl(arg, @as(Ctx, undefined), @as(Inputs, undefined)) catch |err| @compileError(@errorName(err)));
+        }
+    }
+    return @Type(.{ .Struct = .{
+        .layout = .Auto,
+        .decls = &.{},
+        .is_tuple = true,
+        .fields = &fields,
+    } });
+}
+fn evalExprTupleImpl(
+    comptime list: []const parse.ExprNode,
+    ctx: anytype,
+    inputs: anytype,
+) !EvalExprTupleImpl(list, @TypeOf(ctx), @TypeOf(inputs)) {
+    const Tuple = EvalExprTupleImpl(list, @TypeOf(ctx), @TypeOf(inputs));
+    var args: Tuple = undefined;
+    @setEvalBranchQuota(args.len * 2);
+    inline for (list, 0..) |arg, i| {
+        if (@typeInfo(Tuple).Struct.fields[i].is_comptime) continue;
+        args[i] = try evalImpl(arg, ctx, inputs);
+    }
+    return args;
 }
 
 test eval {

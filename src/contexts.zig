@@ -133,7 +133,7 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
         pub inline fn evalIdent(ctx: @This(), comptime ident: []const u8) !EvalIdent(ident) {
             if (@hasDecl(Ns, "EvalIdent")) {
                 if (Ns.EvalIdent(ident) != noreturn) {
-                    return ctx.sub_ctx.evalIdent();
+                    return ctx.sub_ctx.evalIdent(ident);
                 }
             }
             comptime unreachable;
