@@ -8,7 +8,7 @@ fn eval(
 ) !Eval(expr, @TypeOf(ctx), @TypeOf(inputs))
 ```
 wherein the `expr` is expected to be source code representing an expression comprised of:
-* Identifiers, whose value should be assigned by a field in `inputs` of the same name
+* Identifiers, whose value should be assigned by a field in `inputs` of the same name, or be defined by the `ctx`.
 * Integer, float, or character literals
 * Grouped expressions delimited by parentheses
 * Field accesses (`expression`.`identifier`|`operator symbols`)
@@ -39,7 +39,7 @@ which can be described in pseudo-code as:
     /// level and associativity.
     pub const relations: operator.RelationMap(BinOp) = .{...};
 
-    /// Determines the value and type of number literals
+    /// Determines the value and type of number literals.
     pub fn EvalNumberLiteral(comptime src: []const u8) type {...}
     pub fn evalNumberLiteral(comptime src: []const u8) EvalNumberLiteral(src) {...}
 
@@ -49,11 +49,11 @@ which can be described in pseudo-code as:
     pub fn EvalIdent(comptime ident: []const u8) type {...}
     pub fn evalIdent(ctx: @This(), comptime ident: []const u8) !EvalIdent(ident) {...}
 
-    /// Corresponds to `lhs.field`.
-    pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {...}
-    pub fn evalProperty(ctx: @This(), lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field) {...}
+    /// Corresponds to `lhs.accessor`.
+    pub fn EvalProperty(comptime Lhs: type, comptime accessor: []const u8) type {...}
+    pub fn evalProperty(ctx: @This(), lhs: anytype, comptime accessor: []const u8) !EvalProperty(@TypeOf(lhs), accessor) {...}
 
-    /// Corresponds to `lhs[rhs]`.
+    /// Corresponds to `lhs[rhs...]`, where `rhs` is a tuple whose elements are the list of indices used to access `lhs`.
     pub fn EvalIndexAccess(comptime Lhs: type, comptime Rhs: type) type {...}
     pub fn evalIndexAccess(ctx: @This(), lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {...}
 
