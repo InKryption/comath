@@ -168,12 +168,14 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
         pub inline fn evalIndexAccess(ctx: Self, lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
             const Rhs = @TypeOf(rhs);
+            if (!@typeInfo(Rhs).Struct.is_tuple) comptime unreachable;
             if (@hasDecl(Ns, "EvalIndexAccess")) {
                 if (Ns.EvalIndexAccess(Lhs, Rhs) != noreturn) {
                     return ctx.sub_ctx.evalIndexAccess(lhs, rhs);
                 }
             }
-            return lhs[rhs];
+            if (rhs.len != 1) @compileError("Expected single `usize` to index value of type" ++ @typeName(Lhs));
+            return lhs[rhs[0]];
         }
 
         pub fn EvalFuncCall(comptime Callee: type, comptime Args: type) type {
