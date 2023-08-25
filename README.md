@@ -86,3 +86,6 @@ test {
     try std.testing.expect(value == 8);
 }
 ```
+
+### Notable Implementations
+To see an example of the terse notation enabled by comath, see [zilliam](https://github.com/ymndoseijin/zilliam), 
