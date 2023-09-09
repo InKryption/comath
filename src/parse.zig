@@ -6,33 +6,17 @@ const util = @import("util");
 const Tokenizer = @import("Tokenizer.zig");
 const operator = @import("operator.zig");
 
+const MatchOpFn = fn (comptime str: []const u8) callconv(.Inline) bool;
+
 pub fn parseExpr(
     comptime expr: []const u8,
-    comptime UnOpEnum: ?type,
-    comptime BinOpEnum: ?type,
+    comptime maybeMatchUnOp: ?MatchOpFn,
+    comptime maybeMatchBinOp: ?MatchOpFn,
     comptime relations: anytype,
 ) ExprNode {
     comptime {
-        const enum_fields =
-            @typeInfo(UnOpEnum orelse enum {}).Enum.fields ++
-            @typeInfo(BinOpEnum orelse enum {}).Enum.fields;
-        for (enum_fields) |field| {
-            const i = util.indexOfNoneComptime(u8, field.name, Tokenizer.operator_characters) orelse continue;
-            const list = list: {
-                var str: []const u8 = "";
-                for (Tokenizer.operator_characters) |sym|
-                    str = str ++ std.fmt.comptimePrint(" * '{c}'\n", .{sym});
-                break :list str;
-            };
-            return .{ .err = std.fmt.comptimePrint(
-                \\Operator cannot contain byte '{c}' (found in operator '{s}').
-                \\An operator may contain any combination of the following symbols:
-                \\{s}
-            , .{ field.name[i], field.name, list }) };
-        }
-
         const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);
-        const res = parseExprImpl(deduped_expr, .none, .{}, UnOpEnum, BinOpEnum, relations);
+        const res = parseExprImpl(deduped_expr, .none, .{}, maybeMatchUnOp, maybeMatchBinOp, relations);
         return res.result;
     }
 }
@@ -40,17 +24,24 @@ pub fn parseExpr(
 fn ParseExprTester(
     comptime UnOp: type,
     comptime BinOp: type,
-    comptime relations: operator.RelationMap(BinOp),
+    comptime relations: anytype,
 ) type {
     return struct {
         fn expectEqual(
             comptime expr: []const u8,
             comptime expected: ExprNode,
         ) !void {
-            const actual = comptime parseExpr(expr, UnOp, BinOp, relations);
+            const actual = comptime parseExpr(expr, matchUnOp, matchBinOp, relations);
             if (!actual.eql(expected)) {
                 @compileError(std.fmt.comptimePrint("Expected `{}`, got `{}`", .{ expected.fmt(.{ .verbose_paren = true }), actual.fmt(.{ .verbose_paren = true }) }));
             }
+        }
+
+        inline fn matchUnOp(comptime str: []const u8) bool {
+            return @hasField(UnOp, str);
+        }
+        inline fn matchBinOp(comptime str: []const u8) bool {
+            return @hasField(BinOp, str);
         }
     };
 }
@@ -229,8 +220,8 @@ fn parseExprImpl(
     comptime expr: []const u8,
     comptime nest_type: NestType,
     comptime tokenizer_init: Tokenizer,
-    comptime UnOpEnum: ?type,
-    comptime BinOpEnum: ?type,
+    comptime maybeMatchUnOpEnum: ?MatchOpFn,
+    comptime maybeMatchBinOp: ?MatchOpFn,
     comptime relations: anytype,
 ) ParseExprImplInnerUpdate {
     comptime {
@@ -240,7 +231,7 @@ fn parseExprImpl(
 
         @setEvalBranchQuota(expr.len + expr.len / 2);
         var can_be_unary = true;
-        while (true) switch (tokenizer.next(expr)) {
+        mainloop: while (true) switch (tokenizer.next(expr)) {
             .eof => break,
             .ident => |ident| {
                 can_be_unary = false;
@@ -261,17 +252,18 @@ fn parseExprImpl(
                 var len = op_symbols.len;
 
                 if (!can_be_unary) {
-                    const OpEnum = BinOpEnum orelse {
-                        result = .{ .err = "No `BinOp` enum was given to parse the expected unary operator(s) in '" ++ op_symbols[start..] };
-                        break;
+                    const matchBinOp = maybeMatchBinOp orelse {
+                        result = .{ .err = "No `matchBinOp` function was given to parse the expected binary operator(s) in '" ++ op_symbols[start..] };
+                        break :mainloop;
                     };
                     while (start < op_symbols.len) {
-                        if (len == 0) return .{
-                            .err = "Unexpected operator symbols '" ++ op_symbols[start..] ++ "'",
-                        };
+                        if (len == 0) {
+                            result = .{ .err = "Unexpected operator symbols '" ++ op_symbols[start..] ++ "'" };
+                            break :mainloop;
+                        }
 
-                        const op = op_symbols[start..][0..len];
-                        if (!@hasField(OpEnum, op)) {
+                        const op = util.dedupe.scalarSlice(u8, op_symbols[start..][0..len].*);
+                        if (!matchBinOp(op)) {
                             len -= 1;
                             continue;
                         }
@@ -284,17 +276,18 @@ fn parseExprImpl(
                 }
                 if (start == op_symbols.len) continue;
 
-                const OpEnum = UnOpEnum orelse {
+                const matchUnOp = maybeMatchUnOpEnum orelse {
                     result = .{ .err = "No `UnOp` enum was given to parse the expected unary operator(s) in '" ++ op_symbols[start..] };
                     break;
                 };
                 while (start < op_symbols.len) {
-                    if (len == 0) return .{
-                        .err = "Unexpected operator symbols '" ++ op_symbols[start..] ++ "'",
-                    };
+                    if (len == 0) {
+                        result = .{ .err = "Unexpected operator symbols '" ++ op_symbols[start..] ++ "'" };
+                        break;
+                    }
 
-                    const op = op_symbols[start..][0..len];
-                    if (!@hasField(OpEnum, op)) {
+                    const op = util.dedupe.scalarSlice(u8, op_symbols[start..][0..len].*);
+                    if (!matchUnOp(op)) {
                         len -= 1;
                         continue;
                     }
@@ -313,7 +306,7 @@ fn parseExprImpl(
                 can_be_unary = false;
                 var args: []const ExprNode = &.{};
                 while (true) {
-                    const update = parseExprImpl(expr, inner_nest_type, tokenizer, UnOpEnum, BinOpEnum, relations);
+                    const update = parseExprImpl(expr, inner_nest_type, tokenizer, maybeMatchUnOpEnum, maybeMatchBinOp, relations);
                     tokenizer = update.tokenizer;
                     if (update.result != .null) {
                         args = args ++ &[_]ExprNode{update.result};

@@ -112,9 +112,17 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
 
         pub const allow_unused_inputs = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
 
-        pub const UnOp = if (!@hasDecl(Ns, "UnOp")) SimpleUnOp else operator.OpEnumUnion(SimpleUnOp, Ns.UnOp);
-        pub const BinOp = if (!@hasDecl(Ns, "BinOp")) SimpleBinOp else operator.OpEnumUnion(SimpleBinOp, Ns.BinOp);
-        pub const relations: operator.RelationMap(BinOp) = if (!@hasDecl(Ns, "relations"))
+        pub inline fn matchUnOp(comptime str: []const u8) bool {
+            const sub_match = @hasDecl(Ns, "matchUnOp") and Ns.matchUnOp(str);
+            return sub_match or @hasField(SimpleUnOp, str);
+        }
+
+        pub inline fn matchBinOp(comptime str: []const u8) bool {
+            const sub_match = @hasDecl(Ns, "matchBinOp") and Ns.matchBinOp(str);
+            return sub_match or @hasField(SimpleBinOp, str);
+        }
+
+        pub const relations = if (!@hasDecl(Ns, "relations"))
             simple_relations // if this issues an error about missing fields, you need to specify the relations of your custom operators in your SubCtx
         else
             Ns.relations;
@@ -209,7 +217,8 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                     return Ns.EvalUnOp(op, T);
                 }
             }
-            return switch (@field(UnOp, op)) {
+
+            return switch (@field(SimpleUnOp, op)) {
                 .@"-" => T,
             };
         }
@@ -219,7 +228,7 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                     return ctx.sub_ctx.evalUnOp(op, val);
                 }
             }
-            return switch (@field(UnOp, op)) {
+            return switch (@field(SimpleUnOp, op)) {
                 .@"-" => -val,
             };
         }
@@ -233,7 +242,7 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
 
             const lhs: Lhs = std.mem.zeroes(Lhs);
             const rhs: Rhs = std.mem.zeroes(Rhs);
-            return switch (@field(BinOp, op)) {
+            return switch (@field(SimpleBinOp, op)) {
                 .@"+" => @TypeOf(lhs + rhs),
                 .@"+%" => @TypeOf(lhs +% rhs),
                 .@"+|" => @TypeOf(lhs +| rhs),
@@ -261,7 +270,7 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                     return ctx.sub_ctx.evalBinOp(lhs, op, rhs);
                 }
             }
-            return switch (@field(BinOp, op)) {
+            return switch (@field(SimpleBinOp, op)) {
                 .@"+" => lhs + rhs,
                 .@"+%" => lhs +% rhs,
                 .@"+|" => lhs +% rhs,
@@ -347,11 +356,20 @@ test simpleCtx {
     try util.testing.expectEqual(6 - 3 + 4 + 2, comath.eval("6*1-3*1+4*1+2", simpleCtx({}), .{}));
 
     const op_override_ctx = simpleCtx(struct {
-        pub const UnOp = enum { @"++" };
-        pub const BinOp = enum { @"^", @"$" };
+        const UnOp = enum { @"++" };
+        pub inline fn matchUnOp(comptime str: []const u8) bool {
+            return @hasField(UnOp, str);
+        }
+
+        const BinOp = enum { @"^", @"$" };
+        pub inline fn matchBinOp(comptime str: []const u8) bool {
+            return @hasField(BinOp, str);
+        }
+
         pub const relations = .{
             .@"$" = .{ .prec = 2, .assoc = .right },
         };
+
         pub fn EvalUnOp(comptime op: []const u8, comptime T: type) type {
             return switch (@field(UnOp, op)) {
                 .@"++" => T,
@@ -405,8 +423,14 @@ pub fn FnMethodCtx(
 
         pub const allow_unused_inputs = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
 
-        pub const UnOp = Ns.UnOp;
-        pub const BinOp = Ns.BinOp;
+        pub inline fn matchUnOp(comptime str: []const u8) bool {
+            return @hasDecl(Ns, "matchUnOp") and Ns.matchUnOp(str);
+        }
+
+        pub inline fn matchBinOp(comptime str: []const u8) bool {
+            return @hasDecl(Ns, "matchBinOp") and Ns.matchBinOp(str);
+        }
+
         pub const relations = Ns.relations;
 
         pub fn EvalNumberLiteral(comptime src: []const u8) type {

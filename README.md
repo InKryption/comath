@@ -29,11 +29,12 @@ which can be described in pseudo-code as:
     /// not be referenced in `expr`.
     pub const allow_unused_inputs: bool = ...; // defaults to `false`
 
-    /// Should contain tags whose names correspond to operators, which
-    /// must only be comprised of symbols contained in `operator.symbols`.
-    pub const UnOp = enum {...};
-    /// Same constraints as `UnOp`.
-    pub const BinOp = enum {...};
+    /// Should return `true` for any string of symbols corresponding to a recognized unary operator.
+    pub inline fn matchUnOp(comptime str: []const u8) bool {...}
+
+    /// Should return `true` for any string of symbols corresponding to a recognized binary operator.
+    pub inline fn matchBinOp(comptime str: []const u8) bool {...}
+
     /// Struct value whose fields all correspond to the binary operators defined by `BinOp`,
     /// each with a value of type `operator.Relation` describing the binary operator's precedence
     /// level and associativity.

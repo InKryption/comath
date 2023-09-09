@@ -46,15 +46,16 @@ const Number = @import("main.zig").Number;
 ///         and with a value of `false` causes a compile error to be issued for unused inputs.
 ///         This declaration can be omitted, and defaults to `false`.
 ///
-///     + `UnOp: type`
-///         Enum type containing tags whose names correspond to operators, which
-///         must only be comprised of symbols contained in `operator.symbols`
+///     + `matchUnOp: fn (comptime str: []const u8) callconv(.Inline) bool`
+///         Function receiving a string of symbols, which should return true for any string of
+///         symbols matching a recognized unary operator.
 ///
-///     + `BinOp: type`
-///         Same constraints as `UnOp`
+///     + `matchBinOp: fn (comptime str: []const u8) callconv(.Inline) bool`
+///         Function receiving a string of symbols, which should return true for any string of
+///         symbols matching a recognized binary operator.
 ///
 ///     + `relations: operator.RelationMap(BinOp) | @TypeOf(.{...})`
-///         Struct constant whose fields all correspond to the binary operators defined by `BinOp`,
+///         Struct constant whose fields all correspond to the binary operators recognized by `matchBinOp`,
 ///         each with a value of type `operator.Relation` describing the binary operator's precedence
 ///         level and associativity.
 ///
@@ -123,8 +124,8 @@ pub inline fn eval(
     };
     const root = comptime parse.parseExpr(
         deduped_expr,
-        if (@hasDecl(Ns, "UnOp")) Ns.UnOp else null,
-        if (@hasDecl(Ns, "BinOp")) Ns.BinOp else null,
+        if (@hasDecl(Ns, "matchUnOp")) Ns.matchUnOp else null,
+        if (@hasDecl(Ns, "matchBinOp")) Ns.matchBinOp else null,
         if (@hasDecl(Ns, "relations")) Ns.relations else null,
     );
     return evalImpl(root, ctx, inputs);
@@ -147,8 +148,8 @@ pub fn Eval(
     };
     const root = parse.parseExpr(
         expr,
-        if (@hasDecl(Ns, "UnOp")) Ns.UnOp else null,
-        if (@hasDecl(Ns, "BinOp")) Ns.BinOp else null,
+        if (@hasDecl(Ns, "matchUnOp")) Ns.matchUnOp else null,
+        if (@hasDecl(Ns, "matchBinOp")) Ns.matchBinOp else null,
         if (@hasDecl(Ns, "relations")) Ns.relations else null,
     );
     return EvalImpl(root, Ctx, Inputs);
@@ -211,11 +212,16 @@ fn EvalImpl(
     comptime Inputs: type,
 ) type {
     const Ns = switch (@typeInfo(Ctx)) {
-        .Pointer => |pointer| switch (pointer.size) {
-            .One => pointer.child,
-            else => Ctx,
+        .Struct, .Union, .Enum => Ctx,
+        .Pointer => |pointer| Ns: {
+            if (pointer.size != .One) break :Ns struct {};
+            if (pointer.child == anyopaque) break :Ns struct {};
+            break :Ns switch (@typeInfo(pointer.child)) {
+                .Struct, .Union, .Enum, .Opaque => pointer.child,
+                else => struct {},
+            };
         },
-        else => Ctx,
+        else => struct {},
     };
     return switch (expr) {
         .null => noreturn,
@@ -261,11 +267,16 @@ inline fn evalImpl(
 ) !EvalImpl(expr, @TypeOf(ctx), @TypeOf(inputs)) {
     const Ctx = @TypeOf(ctx);
     const Ns = switch (@typeInfo(Ctx)) {
-        .Pointer => |pointer| switch (pointer.size) {
-            .One => pointer.child,
-            else => Ctx,
+        .Struct, .Union, .Enum => Ctx,
+        .Pointer => |pointer| Ns: {
+            if (pointer.size != .One) break :Ns struct {};
+            if (pointer.child == anyopaque) break :Ns struct {};
+            break :Ns switch (@typeInfo(pointer.child)) {
+                .Struct, .Union, .Enum, .Opaque => pointer.child,
+                else => struct {},
+            };
         },
-        else => Ctx,
+        else => struct {},
     };
 
     const Inputs = @TypeOf(inputs);
@@ -381,8 +392,16 @@ fn evalExprTupleImpl(
 
 test eval {
     const BasicCtx = struct {
-        pub const UnOp = enum { @"-" };
-        pub const BinOp = enum { @"+", @"-", @"*", @"/" };
+        const UnOp = enum { @"-" };
+        pub inline fn matchUnOp(comptime str: []const u8) bool {
+            return @hasField(UnOp, str);
+        }
+
+        const BinOp = enum { @"+", @"-", @"*", @"/" };
+        pub inline fn matchBinOp(comptime str: []const u8) bool {
+            return @hasField(BinOp, str);
+        }
+
         pub const relations = .{
             .@"+" = operator.relation(.left, 0),
             .@"-" = operator.relation(.left, 0),
@@ -498,8 +517,11 @@ test eval {
     try util.testing.expectEqual([_]u8{ 'a', 'b', 'c' }, eval("a[0, 2, 4]", basic_ctx, .{ .a = "a b c" }));
 
     const PowCtx = struct {
-        pub const BinOp = enum { @"^" };
-        pub const relations: operator.RelationMap(BinOp) = .{
+        const BinOp = enum { @"^" };
+        pub inline fn matchBinOp(comptime str: []const u8) bool {
+            return @hasField(BinOp, str);
+        }
+        pub const relations = .{
             .@"^" = .{ .prec = 0, .assoc = .right },
         };
 
