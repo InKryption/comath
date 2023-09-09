@@ -123,9 +123,9 @@ pub inline fn eval(
     };
     const root = comptime parse.parseExpr(
         deduped_expr,
-        util.namespaceDecl(Ns, "UnOp") orelse null,
-        util.namespaceDecl(Ns, "BinOp") orelse null,
-        util.namespaceDecl(Ns, "relations") orelse null,
+        if (@hasDecl(Ns, "UnOp")) Ns.UnOp else null,
+        if (@hasDecl(Ns, "BinOp")) Ns.BinOp else null,
+        if (@hasDecl(Ns, "relations")) Ns.relations else null,
     );
     return evalImpl(root, ctx, inputs);
 }
@@ -135,12 +135,21 @@ pub fn Eval(
     comptime Ctx: type,
     comptime Inputs: type,
 ) type {
-    const Ns = util.ImplicitDeref(Ctx);
+    const Ns = switch (@typeInfo(Ctx)) {
+        .Struct, .Union, .Enum => Ctx,
+        .Pointer => |pointer| if (pointer.size != .One)
+            struct {}
+        else switch (@typeInfo(pointer.child)) {
+            .Struct, .Union, .Enum, .Opaque => pointer.child,
+            else => struct {},
+        },
+        else => struct {},
+    };
     const root = parse.parseExpr(
         expr,
-        util.namespaceDecl(Ns, "UnOp") orelse null,
-        util.namespaceDecl(Ns, "BinOp") orelse null,
-        util.namespaceDecl(Ns, "relations") orelse null,
+        if (@hasDecl(Ns, "UnOp")) Ns.UnOp else null,
+        if (@hasDecl(Ns, "BinOp")) Ns.BinOp else null,
+        if (@hasDecl(Ns, "relations")) Ns.relations else null,
     );
     return EvalImpl(root, Ctx, Inputs);
 }

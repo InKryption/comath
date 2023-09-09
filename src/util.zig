@@ -301,7 +301,3 @@ pub inline fn typeIsComptimeOnly(comptime T: type) ?bool {
         .EnumLiteral => true,
     };
 }
-
-pub inline fn namespaceDecl(comptime Ns: type, comptime name: []const u8) ?if (@hasDecl(Ns, name)) @TypeOf(@field(Ns, name)) else noreturn {
-    return if (@hasDecl(Ns, name)) @field(Ns, name) else null;
-}
