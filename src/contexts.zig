@@ -83,23 +83,23 @@ const SimpleBinOp = enum {
     @"@",
 };
 const simple_relations = .{
-    .@"+" = .{ .prec = 10, .assoc = .left },
-    .@"+|" = .{ .prec = 10, .assoc = .left },
-    .@"+%" = .{ .prec = 10, .assoc = .left },
+    .@"+" = operator.relation(.left, 10),
+    .@"+|" = operator.relation(.left, 10),
+    .@"+%" = operator.relation(.left, 10),
 
-    .@"-" = .{ .prec = 10, .assoc = .left },
-    .@"-|" = .{ .prec = 10, .assoc = .left },
-    .@"-%" = .{ .prec = 10, .assoc = .left },
+    .@"-" = operator.relation(.left, 10),
+    .@"-|" = operator.relation(.left, 10),
+    .@"-%" = operator.relation(.left, 10),
 
-    .@"*" = .{ .prec = 20, .assoc = .left },
-    .@"*|" = .{ .prec = 20, .assoc = .left },
-    .@"*%" = .{ .prec = 20, .assoc = .left },
+    .@"*" = operator.relation(.left, 20),
+    .@"*|" = operator.relation(.left, 20),
+    .@"*%" = operator.relation(.left, 20),
 
-    .@"/" = .{ .prec = 20, .assoc = .left },
-    .@"%" = .{ .prec = 20, .assoc = .left },
+    .@"/" = operator.relation(.left, 20),
+    .@"%" = operator.relation(.left, 20),
 
-    .@"^" = .{ .prec = 30, .assoc = .right },
-    .@"@" = .{ .prec = 0, .assoc = .left },
+    .@"^" = operator.relation(.right, 30),
+    .@"@" = operator.relation(.left, 0),
 };
 
 pub inline fn simpleCtx(sub_ctx: anytype) SimpleCtx(@TypeOf(sub_ctx)) {
@@ -122,10 +122,15 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
             return sub_match or @hasField(SimpleBinOp, str);
         }
 
-        pub const relations = if (!@hasDecl(Ns, "relations"))
-            simple_relations // if this issues an error about missing fields, you need to specify the relations of your custom operators in your SubCtx
-        else
-            Ns.relations;
+        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) operator.Order {
+            if (@hasDecl(Ns, "orderBinOp")) blk: {
+                const order = Ns.orderBinOp(lhs, rhs) orelse break :blk;
+                return order;
+            }
+            if (!@hasField(@TypeOf(simple_relations), lhs)) return null;
+            if (!@hasField(@TypeOf(simple_relations), rhs)) return null;
+            return @field(simple_relations, lhs).order(@field(simple_relations, rhs));
+        }
 
         pub const EvalNumberLiteral = DefaultEvalNumberLiteral;
         pub const evalNumberLiteral = defaultEvalNumberLiteral;
@@ -431,7 +436,9 @@ pub fn FnMethodCtx(
             return @hasDecl(Ns, "matchBinOp") and Ns.matchBinOp(str);
         }
 
-        pub const relations = Ns.relations;
+        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) operator.Order {
+            return Ns.orderBinOp(lhs, rhs);
+        }
 
         pub fn EvalNumberLiteral(comptime src: []const u8) type {
             if (@hasDecl(Ns, "EvalNumberLiteral")) {

@@ -34,8 +34,8 @@ pub const Relation = struct {
             .gt => .gt,
             .eq => if (lhs.assoc != rhs.assoc) .incompatible else switch (lhs.assoc) {
                 .none => .incompatible,
-                .left => .lt,
-                .right => .gt,
+                .right => .lt,
+                .left => .gt,
             },
         };
     }

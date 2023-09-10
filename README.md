@@ -35,10 +35,9 @@ which can be described in pseudo-code as:
     /// Should return `true` for any string of symbols corresponding to a recognized binary operator.
     pub inline fn matchBinOp(comptime str: []const u8) bool {...}
 
-    /// Struct value whose fields all correspond to the binary operators defined by `BinOp`,
-    /// each with a value of type `operator.Relation` describing the binary operator's precedence
-    /// level and associativity.
-    pub const relations: operator.RelationMap(BinOp) = .{...};
+    /// Returns the order of the binary operators `lhs` and `rhs`, where `matchBinOp(lhs) = true`, and
+    /// `matchBinOp(rhs) = true`.
+    pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) operator.Order {...}
 
     /// Determines the value and type of number literals.
     pub fn EvalNumberLiteral(comptime src: []const u8) type {...}

@@ -7,16 +7,24 @@ const Tokenizer = @import("Tokenizer.zig");
 const operator = @import("operator.zig");
 
 const MatchOpFn = fn (comptime str: []const u8) callconv(.Inline) bool;
+const OrderBinOpFn = fn (comptime lhs: []const u8, comptime rhs: []const u8) callconv(.Inline) operator.Order;
 
 pub fn parseExpr(
     comptime expr: []const u8,
     comptime maybeMatchUnOp: ?MatchOpFn,
     comptime maybeMatchBinOp: ?MatchOpFn,
-    comptime relations: anytype,
+    comptime maybeOrderBinOp: ?OrderBinOpFn,
 ) ExprNode {
     comptime {
         const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);
-        const res = parseExprImpl(deduped_expr, .none, .{}, maybeMatchUnOp, maybeMatchBinOp, relations);
+        const res = parseExprImpl(
+            deduped_expr,
+            .none,
+            .{},
+            maybeMatchUnOp,
+            maybeMatchBinOp,
+            maybeOrderBinOp,
+        );
         return res.result;
     }
 }
@@ -31,7 +39,7 @@ fn ParseExprTester(
             comptime expr: []const u8,
             comptime expected: ExprNode,
         ) !void {
-            const actual = comptime parseExpr(expr, matchUnOp, matchBinOp, relations);
+            const actual = comptime parseExpr(expr, matchUnOp, matchBinOp, orderBinOp);
             if (!actual.eql(expected)) {
                 @compileError(std.fmt.comptimePrint("Expected `{}`, got `{}`", .{ expected.fmt(.{ .verbose_paren = true }), actual.fmt(.{ .verbose_paren = true }) }));
             }
@@ -42,6 +50,9 @@ fn ParseExprTester(
         }
         inline fn matchBinOp(comptime str: []const u8) bool {
             return @hasField(BinOp, str);
+        }
+        inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) operator.Order {
+            return @as(operator.Relation, @field(relations, lhs)).order(@field(relations, rhs));
         }
     };
 }
@@ -103,13 +114,15 @@ test parseExpr {
     const funcCall = helper.funcCall;
     const Tester = ParseExprTester(
         enum { @"-", @"~", @"!" },
-        enum { @"-", @"+", @"*", @"/", @"^" },
+        enum { @"-", @"+", @"*", @"/", @"^", @"<", @">" },
         .{
-            .@"-" = operator.relation(.left, 0),
-            .@"+" = operator.relation(.left, 0),
-            .@"*" = operator.relation(.left, 1),
-            .@"/" = operator.relation(.left, 1),
-            .@"^" = operator.relation(.right, 2),
+            .@"<" = operator.relation(.none, 0),
+            .@">" = operator.relation(.none, 0),
+            .@"-" = operator.relation(.left, 1),
+            .@"+" = operator.relation(.left, 1),
+            .@"*" = operator.relation(.left, 2),
+            .@"/" = operator.relation(.left, 2),
+            .@"^" = operator.relation(.right, 3),
         },
     );
 
@@ -174,13 +187,6 @@ test parseExpr {
     try Tester.expectEqual("foo[bar,baz]", indexAccess(ident("foo"), &.{ ident("bar"), ident("baz") }));
     try Tester.expectEqual("foo[bar, baz, ]", indexAccess(ident("foo"), &.{ ident("bar"), ident("baz") }));
 
-    // errors
-    // TODO: cover more cases
-    try Tester.expectEqual("foo bar", err("Unexpected token 'bar'"));
-    try Tester.expectEqual("foo )", err("Unexpected closing parentheses"));
-    try Tester.expectEqual("foo (", err("Missing closing parentheses"));
-    try Tester.expectEqual("foo (a,", err("Missing closing parentheses"));
-
     try Tester.expectEqual(
         "6*1-3*1+4*1+2",
         binOp(
@@ -201,6 +207,14 @@ test parseExpr {
             number("2"),
         ),
     );
+
+    // errors
+    // TODO: cover more cases
+    try Tester.expectEqual("foo bar", err("Unexpected token 'bar'"));
+    try Tester.expectEqual("foo )", err("Unexpected closing parentheses"));
+    try Tester.expectEqual("foo (", err("Missing closing parentheses"));
+    try Tester.expectEqual("foo (a,", err("Missing closing parentheses"));
+    try Tester.expectEqual("a < b < c", err("'<' cannot be chained with '<'"));
 }
 
 const NestType = enum(comptime_int) { none, paren, bracket };
@@ -222,7 +236,7 @@ fn parseExprImpl(
     comptime tokenizer_init: Tokenizer,
     comptime maybeMatchUnOpEnum: ?MatchOpFn,
     comptime maybeMatchBinOp: ?MatchOpFn,
-    comptime relations: anytype,
+    comptime maybeOrderBinOp: ?OrderBinOpFn,
 ) ParseExprImplInnerUpdate {
     comptime {
         var result: ExprNode = .null;
@@ -269,7 +283,7 @@ fn parseExprImpl(
                         }
                         start += len;
                         len = op_symbols.len - start;
-                        result = result.concatBinOp(op, relations);
+                        result = result.concatBinOp(op, maybeOrderBinOp);
                         break;
                     }
                     can_be_unary = true;
@@ -306,7 +320,7 @@ fn parseExprImpl(
                 can_be_unary = false;
                 var args: []const ExprNode = &.{};
                 while (true) {
-                    const update = parseExprImpl(expr, inner_nest_type, tokenizer, maybeMatchUnOpEnum, maybeMatchBinOp, relations);
+                    const update = parseExprImpl(expr, inner_nest_type, tokenizer, maybeMatchUnOpEnum, maybeMatchBinOp, maybeOrderBinOp);
                     tokenizer = update.tokenizer;
                     if (update.result != .null) {
                         args = args ++ &[_]ExprNode{update.result};
@@ -441,7 +455,7 @@ pub const ExprNode = union(enum(comptime_int)) {
     inline fn concatBinOp(
         comptime base: ExprNode,
         comptime op: []const u8,
-        comptime relations: anytype,
+        comptime maybeOrderBinOp: ?OrderBinOpFn,
     ) ExprNode {
         return switch (base) {
             .null => .{ .err = "Unexpected token '" ++ op ++ "'" },
@@ -465,17 +479,18 @@ pub const ExprNode = union(enum(comptime_int)) {
                 .err => base,
 
                 .bin_op => |mid_bin| blk: {
-                    const lhs_rel: operator.Relation = @as(?operator.Relation, @field(relations, lhs_bin.op)) orelse return .{ .err = "Missing relationship definition for operator '" ++ lhs_bin.op ++ "'" };
-                    const mid_rel: operator.Relation = @as(?operator.Relation, @field(relations, mid_bin.op)) orelse return .{ .err = "Missing relationship definition for operator '" ++ mid_bin.op ++ "'" };
-                    const rhs_rel: operator.Relation = @as(?operator.Relation, @field(relations, op)) orelse return .{ .err = "Missing relationship definition for operator '" ++ op ++ "'" };
-                    if (lhs_rel.order(mid_rel) != .lt) unreachable;
+                    const orderBinOp = maybeOrderBinOp orelse break :blk .{
+                        .err = "No `orderBinOp` function was given to determine the order between '" ++ lhs_bin.op ++ "', '" ++ mid_bin.op ++ "', and '" ++ op ++ "'",
+                    };
+                    if (orderBinOp(lhs_bin.op, mid_bin.op) != .lt) unreachable;
 
-                    break :blk switch (mid_rel.order(rhs_rel)) {
+                    const order = orderBinOp(mid_bin.op, op);
+                    break :blk switch (order) {
                         .incompatible => .{ .err = lhs_bin.op ++ " cannot be chained with " ++ op },
                         .lt => .{ .bin_op = &.{
                             .lhs = lhs_bin.lhs,
                             .op = lhs_bin.op,
-                            .rhs = lhs_bin.rhs.concatBinOp(op, relations),
+                            .rhs = lhs_bin.rhs.concatBinOp(op, maybeOrderBinOp),
                         } },
                         .gt => .{ .bin_op = &.{
                             .lhs = base,
@@ -493,21 +508,14 @@ pub const ExprNode = union(enum(comptime_int)) {
                 .func_call,
                 .un_op,
                 => blk: {
-                    const relation_map = switch (@typeInfo(@TypeOf(relations))) {
-                        .Optional => relations orelse .{},
-                        .Null => .{},
-                        else => relations,
+                    const orderBinOp = maybeOrderBinOp orelse break :blk .{
+                        .err = "No `orderBinOp` function was given to determine the order between '" ++ lhs_bin.op ++ "', and '" ++ op ++ "'",
                     };
-                    const lhs_rel: operator.Relation = @as(?operator.Relation, @field(relation_map, lhs_bin.op)) orelse return .{ .err = "Missing relationship definition for operator '" ++ lhs_bin.op ++ "'" };
-                    const rhs_rel: operator.Relation = @as(?operator.Relation, @field(relation_map, op)) orelse return .{ .err = "Missing relationship definition for operator '" ++ op ++ "'" };
 
-                    if (lhs_rel.prec == rhs_rel.prec and lhs_rel.assoc != rhs_rel.assoc) {
-                        return .{ .err = lhs_bin.op ++ " cannot be chained with " ++ op };
-                    }
-                    if (lhs_rel.prec < rhs_rel.prec or
-                        (lhs_rel.prec == rhs_rel.prec and lhs_rel.assoc == .right))
-                    {
-                        break :blk .{ .bin_op = &.{
+                    const order = orderBinOp(lhs_bin.op, op);
+                    break :blk switch (order) {
+                        .incompatible => .{ .err = "'" ++ lhs_bin.op ++ "'" ++ " cannot be chained with '" ++ op ++ "'" },
+                        .lt => .{ .bin_op = &.{
                             .lhs = lhs_bin.lhs,
                             .op = lhs_bin.op,
                             .rhs = .{ .bin_op = &.{
@@ -515,13 +523,13 @@ pub const ExprNode = union(enum(comptime_int)) {
                                 .op = op,
                                 .rhs = .null,
                             } },
-                        } };
-                    }
-                    break :blk .{ .bin_op = &.{
-                        .lhs = base,
-                        .op = op,
-                        .rhs = .null,
-                    } };
+                        } },
+                        .gt => .{ .bin_op = &.{
+                            .lhs = base,
+                            .op = op,
+                            .rhs = .null,
+                        } },
+                    };
                 },
             },
         };

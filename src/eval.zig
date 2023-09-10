@@ -54,10 +54,13 @@ const Number = @import("main.zig").Number;
 ///         Function receiving a string of symbols, which should return true for any string of
 ///         symbols matching a recognized binary operator.
 ///
-///     + `relations: operator.RelationMap(BinOp) | @TypeOf(.{...})`
-///         Struct constant whose fields all correspond to the binary operators recognized by `matchBinOp`,
-///         each with a value of type `operator.Relation` describing the binary operator's precedence
-///         level and associativity.
+///     + `orderBinOp: fn (comptime lhs: []const u8, comptime rhs: []const u8) callconv(.Inline) operator.Order`
+///         Function receiving a pair of strings representing two chained binary operators,
+///         wherein for both `matchBinOp(s) = true`, which should return the ordering relation
+///         between the two. For example, given an expression `a $ b @ c`:
+///             - With `orderBinOp("$", "@") = .lt`           => the expression will be interpreted as `a $ (b @ c)`.
+///             - With `orderBinOp("$", "@") = .gt`           => the expression will be interpreted as `(a $ b) @ c`.
+///             - With `orderBinOp("$", "@") = .incompatible` => the expression will be considered invalid.
 ///
 ///     + `EvalNumberLiteral: fn (comptime src: []const u8) type`
 ///     + `evalNumberLiteral: fn (comptime src: []const u8) EvalNumberLiteral(src)`
@@ -123,10 +126,10 @@ pub inline fn eval(
             @compileError(@errorName(err));
     };
     const root = comptime parse.parseExpr(
-        deduped_expr,
+        expr,
         if (@hasDecl(Ns, "matchUnOp")) Ns.matchUnOp else null,
         if (@hasDecl(Ns, "matchBinOp")) Ns.matchBinOp else null,
-        if (@hasDecl(Ns, "relations")) Ns.relations else null,
+        if (@hasDecl(Ns, "orderBinOp")) Ns.orderBinOp else null,
     );
     return evalImpl(root, ctx, inputs);
 }
@@ -150,7 +153,7 @@ pub fn Eval(
         expr,
         if (@hasDecl(Ns, "matchUnOp")) Ns.matchUnOp else null,
         if (@hasDecl(Ns, "matchBinOp")) Ns.matchBinOp else null,
-        if (@hasDecl(Ns, "relations")) Ns.relations else null,
+        if (@hasDecl(Ns, "orderBinOp")) Ns.orderBinOp else null,
     );
     return EvalImpl(root, Ctx, Inputs);
 }
@@ -402,12 +405,15 @@ test eval {
             return @hasField(BinOp, str);
         }
 
-        pub const relations = .{
+        const relations = .{
             .@"+" = operator.relation(.left, 0),
             .@"-" = operator.relation(.left, 0),
             .@"*" = operator.relation(.left, 1),
             .@"/" = operator.relation(.left, 1),
         };
+        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) operator.Order {
+            return @field(relations, lhs).order(@field(relations, rhs));
+        }
 
         pub const EvalNumberLiteral = comath.contexts.DefaultEvalNumberLiteral;
         pub const evalNumberLiteral = comath.contexts.defaultEvalNumberLiteral;
