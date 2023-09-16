@@ -104,6 +104,7 @@ pub inline fn eqlComptime(comptime T: type, comptime a: []const T, comptime b: [
     const V = @Vector(len, T);
     comptime return @reduce(.And, @as(V, a[0..].*) == @as(V, b[0..].*));
 }
+
 pub inline fn indexOfDiffComptime(comptime T: type, comptime a: []const T, comptime b: []const T) ?comptime_int {
     const shortest = @min(a.len, b.len);
     const V = @Vector(shortest, T);
@@ -177,6 +178,7 @@ pub inline fn indexOfNonePosComptime(
         return null;
     return start + offs;
 }
+
 pub const indexOfNoneComptime = struct {
     fn indexOfNoneComptime(
         comptime T: type,
@@ -201,9 +203,7 @@ pub const indexOfNoneComptime = struct {
         @setEvalBranchQuota(@min(std.math.maxInt(u32), (excluded.len + 1) * 100));
         for (excluded) |ex| {
             const ex_vec: @Vector(arr.len, T) = @splat(ex);
-            // const prev: @Vector(arr.len, u1) = @bitCast(trues);
             const current = arr != ex_vec;
-            // trues = @bitCast(prev & current);
             trues = simdAnd(trues, current);
         }
 
@@ -212,6 +212,17 @@ pub const indexOfNoneComptime = struct {
         return if (idx == haystack.len) null else idx;
     }
 }.indexOfNoneComptime;
+
+pub inline fn containsScalarComptime(
+    comptime T: type,
+    comptime haystack: anytype,
+    comptime needle: T,
+) bool {
+    if (@TypeOf(haystack) != [haystack.len]T) unreachable;
+    const needle_vec: @Vector(haystack.len, T) = @splat(needle);
+    const matches = haystack == needle_vec;
+    return @reduce(.Or, matches);
+}
 
 pub inline fn implicitDeref(ptr_or_val: anytype) ImplicitDeref(@TypeOf(ptr_or_val)) {
     return switch (@typeInfo(@TypeOf(ptr_or_val))) {

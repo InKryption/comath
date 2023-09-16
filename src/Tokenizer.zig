@@ -6,20 +6,40 @@ const util = @import("util");
 const Tokenizer = @This();
 index: comptime_int = 0,
 
+/// The set of characters which are used to separate meaningful tokens.
+pub const whitespace_characters: []const u8 = &[_]u8{
+    ' ',
+    '\t',
+    '\n',
+    '\r',
+    std.ascii.control_code.vt,
+    std.ascii.control_code.ff,
+};
+
+/// The set of characters which are valid for use as part of an operator.
 pub const operator_characters: []const u8 = &[_]u8{
     '!', '#', '$', '%', '&', '*',
     '+', '-', '/', '<', '=', '>',
     '?', '@', '~', '^', '|', ':',
 };
+
+/// The set of characters which can be used to start and compose an identifier.
 pub const identifier_start_characters: []const u8 =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ" ++
     "abcdefghijklmnopqrstuvwxyz" ++
-    "_";
+    "_" //
+;
+
+/// The set of characters which can be used to compose an identifier, though only a subset
+/// can be used to start an identifier.
 pub const identifier_characters: []const u8 = identifier_start_characters ++ "0123456789";
+
+/// The set of characters which are valid after a period ('.').
+pub const field_access_characters: []const u8 = operator_characters ++ identifier_characters;
 
 pub const Token = union(enum) {
     /// no more tokens left
-    eof,
+    eof: enum(comptime_int) {},
 
     ident: []const u8,
     /// '.' field
@@ -37,6 +57,73 @@ pub const Token = union(enum) {
     bracket_open,
     /// ']'
     bracket_close,
+
+    /// error while tokenizing
+    err: Err,
+
+    pub const Err = union(enum(comptime_int)) {
+        empty_field_access,
+        unexpected_byte: u8,
+    };
+
+    pub inline fn eql(comptime a: Token, comptime b: Token) bool {
+        comptime if (std.meta.activeTag(a) != b) return false;
+        return switch (a) {
+            .eof,
+            .comma,
+            .paren_open,
+            .paren_close,
+            .bracket_open,
+            .bracket_close,
+            => true,
+
+            inline //
+            .ident,
+            .field,
+            .number,
+            .op_symbols,
+            => |str, tag| util.eqlComptime(u8, str, @field(b, @tagName(tag))),
+
+            .err => |a_err| std.meta.activeTag(a_err) == b.err and switch (a_err) {
+                .empty_field_access => true,
+                .unexpected_byte => |a_byte| a_byte == b.err.unexpected_byte,
+            },
+        };
+    }
+
+    pub inline fn format(
+        comptime self: Token,
+        comptime fmt_str: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) @TypeOf(writer).Error!void {
+        _ = options;
+        if (fmt_str.len != 0) comptime {
+            std.fmt.invalidFmtError(fmt_str, self);
+        };
+
+        switch (self) {
+            inline //
+            .ident,
+            .field,
+            .number,
+            .op_symbols,
+            => |str, tag| try writer.writeAll(comptime std.fmt.comptimePrint("{s}({s})", .{ @tagName(tag), str })),
+
+            .eof,
+            .comma,
+            .paren_open,
+            .paren_close,
+            .bracket_open,
+            .bracket_close,
+            => try writer.writeAll(@tagName(self)),
+
+            .err => |err| switch (err) {
+                .empty_field_access => |_| try writer.writeAll(comptime std.fmt.comptimePrint("{s}({s})", .{ @tagName(self), @tagName(err) })),
+                .unexpected_byte => |byte| try writer.writeAll(comptime std.fmt.comptimePrint("{s}({s}('{'}'))", .{ @tagName(self), @tagName(err), std.zig.fmtEscapes(@as(*const [1]u8, &byte)) })),
+            },
+        }
+    }
 };
 
 pub inline fn next(
@@ -63,25 +150,55 @@ const PeekRes = struct {
     state: Tokenizer,
 };
 fn peekImpl(
-    comptime tokenizer: Tokenizer,
+    comptime tokenizer_init: Tokenizer,
     comptime buffer: []const u8,
 ) PeekRes {
+    if (!@inComptime()) comptime unreachable;
+
+    const tokenizer = blk: {
+        var tokenizer = tokenizer_init;
+        switch ((buffer ++ &[_:0]u8{})[tokenizer.index]) {
+            ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff => {
+                const whitespace_end = util.indexOfNonePosComptime(u8, buffer, tokenizer.index + 1, whitespace_characters) orelse buffer.len;
+                tokenizer.index = whitespace_end;
+            },
+            else => {},
+        }
+        break :blk tokenizer;
+    };
+
     switch ((buffer ++ &[_:0]u8{})[tokenizer.index]) {
-        0 => return .{
-            .state = tokenizer,
-            .token = .eof,
+        0 => |sentinel| {
+            if (tokenizer_init.index != buffer.len) return .{
+                .state = .{ .index = tokenizer.index + 1 },
+                .token = .{ .err = .{ .unexpected_byte = sentinel } },
+            };
+            return .{
+                .state = tokenizer,
+                .token = .eof,
+            };
         },
-        ' ', '\t', '\n', '\r' => {
-            const whitespace_end = util.indexOfNonePosComptime(u8, buffer, tokenizer.index + 1, &.{ ' ', '\t', '\n', '\r' }) orelse buffer.len;
-            var fwd_state = tokenizer;
-            fwd_state.index = whitespace_end;
-            return fwd_state.peekImpl(buffer);
+
+        ' ',
+        '\t',
+        '\n',
+        '\r',
+        std.ascii.control_code.vt,
+        std.ascii.control_code.ff,
+        => unreachable,
+
+        ',', '(', ')', '[', ']' => |char| return .{
+            .state = .{ .index = tokenizer.index + 1 },
+            .token = switch (char) {
+                ',' => .comma,
+                '(' => .paren_open,
+                ')' => .paren_close,
+                '[' => .bracket_open,
+                ']' => .bracket_close,
+                else => unreachable,
+            },
         },
-        ',' => return .{ .state = .{ .index = tokenizer.index + 1 }, .token = .comma },
-        '(' => return .{ .state = .{ .index = tokenizer.index + 1 }, .token = .paren_open },
-        ')' => return .{ .state = .{ .index = tokenizer.index + 1 }, .token = .paren_close },
-        '[' => return .{ .state = .{ .index = tokenizer.index + 1 }, .token = .bracket_open },
-        ']' => return .{ .state = .{ .index = tokenizer.index + 1 }, .token = .bracket_close },
+
         'a'...'z',
         'A'...'Z',
         '_',
@@ -95,10 +212,15 @@ fn peekImpl(
             };
         },
         '.' => {
-            const start = tokenizer.index + 1;
-            const end = util.indexOfNonePosComptime(u8, buffer, start + 1, identifier_characters ++ operator_characters) orelse buffer.len;
+            const start = util.indexOfNonePosComptime(u8, buffer, tokenizer.index + 1, whitespace_characters) orelse buffer.len;
+            const end = util.indexOfNonePosComptime(u8, buffer, @min(buffer.len, start + 1), identifier_characters ++ operator_characters) orelse buffer.len;
             const ident = util.dedupe.scalarSlice(u8, buffer[start..end].*);
-            if (ident.len == 0) @compileError("Expected identifier following period");
+            if (ident.len == 0 or
+                !util.containsScalarComptime(u8, field_access_characters[0..].*, ident[0]) //
+            ) return .{
+                .state = .{ .index = start },
+                .token = .{ .err = .empty_field_access },
+            };
             return .{
                 .state = .{ .index = end },
                 .token = .{ .field = ident },
@@ -120,8 +242,11 @@ fn peekImpl(
         },
         else => |first_byte| {
             const start = tokenizer.index;
-            const end = util.indexOfNonePosComptime(u8, buffer, start + 1, operator_characters) orelse buffer.len;
-            if (start == end) @compileError("Unexpected byte '" ++ &[_]u8{first_byte} ++ "'");
+            const end = util.indexOfNonePosComptime(u8, buffer, start, operator_characters) orelse buffer.len;
+            if (start == end) return .{
+                .state = .{ .index = end + 1 },
+                .token = .{ .err = .{ .unexpected_byte = first_byte } },
+            };
             return .{
                 .state = .{ .index = end },
                 .token = .{ .op_symbols = util.dedupe.scalarSlice(u8, buffer[start..end].*) },
@@ -138,10 +263,16 @@ fn testTokenizer(
     comptime var tokenizer = Tokenizer{};
     inline for (expected) |expected_tok| {
         const actual_tok = tokenizer.next(buffer);
-        try util.testing.expectEqualDeep(expected_tok, actual_tok);
+        if (actual_tok.eql(expected_tok)) continue;
+        std.log.err("Expected '{}', found '{}'", .{ expected_tok, actual_tok });
+        return error.TestExpectedEqual;
     }
-    try util.testing.expectEqualDeep(.eof, tokenizer.next(buffer));
-    try util.testing.expectEqualDeep(.eof, tokenizer.next(buffer));
+    const expected_tok: Token = .eof;
+    const actual_tok = tokenizer.next(buffer);
+    if (!expected_tok.eql(actual_tok)) {
+        std.log.err("Expected '{}', found '{}'", .{ expected_tok, actual_tok });
+        return error.TestExpectedEqual;
+    }
 }
 
 test Tokenizer {
@@ -186,5 +317,45 @@ test Tokenizer {
         .{ .op_symbols = "+" },
         .{ .op_symbols = "-" },
         .{ .number = "3" },
+    });
+    try testTokenizer("a.+ + 36", &.{
+        .{ .ident = "a" },
+        .{ .field = "+" },
+        .{ .op_symbols = "+" },
+        .{ .number = "36" },
+    });
+    try testTokenizer("a.++ 36", &.{
+        .{ .ident = "a" },
+        .{ .field = "++" },
+        .{ .number = "36" },
+    });
+    try testTokenizer("a.++36", &.{
+        .{ .ident = "a" },
+        .{ .field = "++36" },
+    });
+    try testTokenizer("a. ++36", &.{
+        .{ .ident = "a" },
+        .{ .field = "++36" },
+    });
+    try testTokenizer("a.  (", &.{
+        .{ .ident = "a" },
+        .{ .err = .empty_field_access },
+        .{ .paren_open = {} },
+    });
+    try testTokenizer("a.  )  + a", &.{
+        .{ .ident = "a" },
+        .{ .err = .empty_field_access },
+        .{ .paren_close = {} },
+        .{ .op_symbols = "+" },
+        .{ .ident = "a" },
+    });
+    try testTokenizer("\x00", &.{
+        .{ .err = .{ .unexpected_byte = '\x00' } },
+    });
+    try testTokenizer("\x00(+\xff", &.{
+        .{ .err = .{ .unexpected_byte = '\x00' } },
+        .{ .paren_open = {} },
+        .{ .op_symbols = "+" },
+        .{ .err = .{ .unexpected_byte = '\xff' } },
     });
 }

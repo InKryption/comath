@@ -247,6 +247,12 @@ fn parseExprImpl(
         var can_be_unary = true;
         mainloop: while (true) switch (tokenizer.next(expr)) {
             .eof => break,
+            .err => |err| switch (err) {
+                .empty_field_access => |start| {
+                    result = .{ .err = std.fmt.comptimePrint("Expected field access characters after period ('.'), instead found '{}'", .{Tokenizer.peek(.{ .index = start }, expr)}) };
+                    break :mainloop;
+                },
+            },
             .ident => |ident| {
                 can_be_unary = false;
                 result = result.concatIdent(ident);
@@ -614,7 +620,11 @@ pub const ExprNode = union(enum(comptime_int)) {
             },
         };
     }
-    inline fn concatFunctionArgsOrJustGroup(comptime base: ExprNode, comptime delimiter: enum { paren, bracket }, comptime args: []const ExprNode) ExprNode {
+    inline fn concatFunctionArgsOrJustGroup(
+        comptime base: ExprNode,
+        comptime delimiter: enum { paren, bracket },
+        comptime args: []const ExprNode,
+    ) ExprNode {
         return switch (base) {
             .null => if (args.len != 1 or delimiter != .paren)
                 .{ .err = "Group must be comprised of exactly 1 expression and be delimited by parentheses" }
