@@ -3,21 +3,6 @@ const assert = std.debug.assert;
 
 const util = @This();
 
-pub inline fn simdOr(a: anytype, b: anytype) @Vector(@typeInfo(@TypeOf(a, b)).Vector.len, bool) {
-    const T = @TypeOf(a, b);
-    const len = @typeInfo(T).Vector.len;
-    const a_bits: @Vector(len, u1) = @bitCast(a);
-    const b_bits: @Vector(len, u1) = @bitCast(b);
-    return @bitCast(a_bits | b_bits);
-}
-pub inline fn simdAnd(a: anytype, b: anytype) @Vector(@typeInfo(@TypeOf(a, b)).Vector.len, bool) {
-    const T = @TypeOf(a, b);
-    const len = @typeInfo(T).Vector.len;
-    const a_bits: @Vector(len, u1) = @bitCast(a);
-    const b_bits: @Vector(len, u1) = @bitCast(b);
-    return @bitCast(a_bits & b_bits);
-}
-
 pub const testing = struct {
     pub inline fn expectEqual(a: anytype, b: anytype) !void {
         const T = @TypeOf(a, b);
@@ -159,9 +144,13 @@ pub inline fn replaceAnyWithScalarComptime(
     comptime {
         @setEvalBranchQuota(needles.len * 2 + 1);
         var matches: @Vector(input.len, bool) = .{false} ** input.len;
+        const BitVec = @Vector(matches.len, u1);
         for (needles) |needle| {
             const needle_vec: @Vector(input.len, T) = @splat(needle);
-            matches = simdOr(matches, needle_vec == input[0..].*);
+
+            const match_bits: BitVec = @bitCast(matches);
+            const eql_bits: BitVec = @bitCast(needle_vec == input[0..].*);
+            matches = @bitCast(match_bits | eql_bits);
         }
         const replacement_vec: @Vector(input.len, T) = @splat(replacement);
         return @select(T, matches, replacement_vec, input[0..].*);
@@ -200,11 +189,15 @@ pub const indexOfNoneComptime = struct {
         const arr = haystack[0..].*;
 
         var trues: @Vector(arr.len, bool) = .{true} ** arr.len;
+        const BitVec = @Vector(arr.len, u1);
         @setEvalBranchQuota(@min(std.math.maxInt(u32), (excluded.len + 1) * 100));
         for (excluded) |ex| {
             const ex_vec: @Vector(arr.len, T) = @splat(ex);
             const current = arr != ex_vec;
-            trues = simdAnd(trues, current);
+
+            const trues_bits: BitVec = @bitCast(trues);
+            const current_bits: BitVec = @bitCast(current);
+            trues = @bitCast(trues_bits & current_bits);
         }
 
         const mask: std.meta.Int(.unsigned, arr.len) = @bitCast(trues);

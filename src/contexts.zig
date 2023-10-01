@@ -63,25 +63,7 @@ pub fn defaultEvalNumberLiteral(comptime src: []const u8) DefaultEvalNumberLiter
 }
 
 const SimpleUnOp = enum { @"-" };
-const SimpleBinOp = enum {
-    @"+",
-    @"+|",
-    @"+%",
-
-    @"-",
-    @"-|",
-    @"-%",
-
-    @"*",
-    @"*|",
-    @"*%",
-
-    @"/",
-    @"%",
-
-    @"^",
-    @"@",
-};
+const SimpleBinOp = std.meta.FieldEnum(@TypeOf(simple_relations));
 const simple_relations = .{
     .@"+" = operator.relation(.left, 10),
     .@"+|" = operator.relation(.left, 10),
@@ -99,7 +81,6 @@ const simple_relations = .{
     .@"%" = operator.relation(.left, 20),
 
     .@"^" = operator.relation(.right, 30),
-    .@"@" = operator.relation(.left, 0),
 };
 
 pub inline fn simpleCtx(sub_ctx: anytype) SimpleCtx(@TypeOf(sub_ctx)) {
@@ -245,8 +226,14 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                 }
             }
 
-            const lhs: Lhs = std.mem.zeroes(Lhs);
-            const rhs: Rhs = std.mem.zeroes(Rhs);
+            const lhs: Lhs = switch (@typeInfo(Lhs)) {
+                .Int, .ComptimeInt, .Float, .ComptimeFloat => 0,
+                else => return noreturn,
+            };
+            const rhs: Rhs = switch (@typeInfo(Rhs)) {
+                .Int, .ComptimeInt, .Float, .ComptimeFloat => 0,
+                else => return noreturn,
+            };
             return switch (@field(SimpleBinOp, op)) {
                 .@"+" => @TypeOf(lhs + rhs),
                 .@"+%" => @TypeOf(lhs +% rhs),
@@ -264,7 +251,6 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                 .@"%" => @TypeOf(lhs % rhs),
 
                 .@"^" => @TypeOf(lhs ^ rhs),
-                .@"@" => [rhs.len][lhs[0].len]@TypeOf(lhs[0][0]),
             };
         }
         pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: []const u8, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
@@ -304,28 +290,6 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
 
                     break :blk std.math.pow(T, lhs, rhs);
                 },
-                .@"@" => blk: {
-                    const columns_num = lhs[0].len;
-                    const rows_num = rhs.len;
-                    const T = @TypeOf(lhs[0][0]);
-
-                    @setEvalBranchQuota(1000 + rhs.len * 10);
-                    var res: [columns_num][rows_num]T = undefined;
-                    inline for (rhs, 0..) |prev_column, i| {
-                        var column: @Vector(columns_num, T) = .{0} ** columns_num;
-
-                        inline for (0..lhs.len) |j| {
-                            const mask = ([1]i32{@intCast(j)}) ** columns_num;
-                            var vi = @shuffle(T, prev_column, undefined, mask);
-
-                            vi = vi * lhs[j];
-                            column += vi;
-                        }
-
-                        res[i] = column;
-                    }
-                    break :blk res;
-                },
             };
         }
 
@@ -346,16 +310,6 @@ test simpleCtx {
     try util.testing.expectEqual(5, comath.eval("a + b", simpleCtx({}), .{ .a = 2, .b = 3 }));
     try util.testing.expectEqual(1, comath.eval("a +% b", simpleCtx({}), .{ .a = @as(u8, std.math.maxInt(u8)), .b = 2 }));
     try util.testing.expectEqual(59049, comath.eval("3^(2 * a + -b)", simpleCtx({}), .{ .a = 7, .b = 4 }));
-
-    try util.testing.expectEqual([2][2]u16{ .{ 140, 320 }, .{ 146, 335 } }, comath.eval("a @ b", simpleCtx({}), .{
-        .a = [3][2]u16{ .{ 1, 4 }, .{ 2, 5 }, .{ 3, 6 } },
-        .b = [2][3]u16{ .{ 10, 20, 30 }, .{ 11, 21, 31 } },
-    }));
-    try util.testing.expectEqual([2][2]u16{ .{ 188, 422 }, .{ 207, 468 } }, comath.eval("a @ b @ c", simpleCtx({}), .{
-        .a = [3][2]u16{ .{ 1, 4 }, .{ 2, 5 }, .{ 3, 6 } },
-        .b = [2][3]u16{ .{ 1, 2, 4 }, .{ 2, 3, 6 } },
-        .c = [2][2]u16{ .{ 8, 2 }, .{ 3, 6 } },
-    }));
 
     // complex precedence interactions
     try util.testing.expectEqual(6 - 3 + 4 + 2, comath.eval("6*1-3*1+4*1+2", simpleCtx({}), .{}));
