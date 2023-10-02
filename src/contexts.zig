@@ -1,6 +1,5 @@
 const std = @import("std");
 const comath = @import("main.zig");
-const operator = comath.operator;
 const util = @import("util");
 
 const contexts = @This();
@@ -67,22 +66,22 @@ pub fn defaultEvalNumberLiteral(comptime src: []const u8) DefaultEvalNumberLiter
 const SimpleUnOp = enum { @"-" };
 const SimpleBinOp = std.meta.FieldEnum(@TypeOf(simple_relations));
 const simple_relations = .{
-    .@"+" = operator.relation(.left, 10),
-    .@"+|" = operator.relation(.left, 10),
-    .@"+%" = operator.relation(.left, 10),
+    .@"+" = comath.relation(.left, 10),
+    .@"+|" = comath.relation(.left, 10),
+    .@"+%" = comath.relation(.left, 10),
 
-    .@"-" = operator.relation(.left, 10),
-    .@"-|" = operator.relation(.left, 10),
-    .@"-%" = operator.relation(.left, 10),
+    .@"-" = comath.relation(.left, 10),
+    .@"-|" = comath.relation(.left, 10),
+    .@"-%" = comath.relation(.left, 10),
 
-    .@"*" = operator.relation(.left, 20),
-    .@"*|" = operator.relation(.left, 20),
-    .@"*%" = operator.relation(.left, 20),
+    .@"*" = comath.relation(.left, 20),
+    .@"*|" = comath.relation(.left, 20),
+    .@"*%" = comath.relation(.left, 20),
 
-    .@"/" = operator.relation(.left, 20),
-    .@"%" = operator.relation(.left, 20),
+    .@"/" = comath.relation(.left, 20),
+    .@"%" = comath.relation(.left, 20),
 
-    .@"^" = operator.relation(.right, 30),
+    .@"^" = comath.relation(.right, 30),
 };
 
 pub inline fn simpleCtx(sub_ctx: anytype) SimpleCtx(@TypeOf(sub_ctx)) {
@@ -105,7 +104,7 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
             return sub_match or @hasField(SimpleBinOp, str);
         }
 
-        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) operator.Order {
+        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) comath.Order {
             if (@hasDecl(Ns, "orderBinOp")) blk: {
                 const order = Ns.orderBinOp(lhs, rhs) orelse break :blk;
                 return order;
@@ -392,7 +391,7 @@ pub fn FnMethodCtx(
             return @hasDecl(Ns, "matchBinOp") and Ns.matchBinOp(str);
         }
 
-        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) operator.Order {
+        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) comath.Order {
             return Ns.orderBinOp(lhs, rhs);
         }
 

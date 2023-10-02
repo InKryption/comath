@@ -6,7 +6,6 @@ const util = @import("util");
 const Tokenizer = @import("Tokenizer.zig");
 const parse = @import("parse.zig");
 
-const operator = @import("operator.zig");
 const Number = @import("main.zig").Number;
 
 /// Evaluates `expr` as an expression, wherein the operations are defined
@@ -406,12 +405,12 @@ test eval {
         }
 
         const relations = .{
-            .@"+" = operator.relation(.left, 0),
-            .@"-" = operator.relation(.left, 0),
-            .@"*" = operator.relation(.left, 1),
-            .@"/" = operator.relation(.left, 1),
+            .@"+" = comath.relation(.left, 0),
+            .@"-" = comath.relation(.left, 0),
+            .@"*" = comath.relation(.left, 1),
+            .@"/" = comath.relation(.left, 1),
         };
-        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) operator.Order {
+        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) comath.Order {
             return @field(relations, lhs).order(@field(relations, rhs));
         }
 

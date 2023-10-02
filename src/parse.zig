@@ -1,13 +1,15 @@
+const comath = @import("main.zig");
+
 const std = @import("std");
 const assert = std.debug.assert;
 
 const util = @import("util");
 
 const Tokenizer = @import("Tokenizer.zig");
-const operator = @import("operator.zig");
+// const operator = @import("operator.zig");
 
 const MatchOpFn = fn (comptime str: []const u8) callconv(.Inline) bool;
-const OrderBinOpFn = fn (comptime lhs: []const u8, comptime rhs: []const u8) callconv(.Inline) operator.Order;
+const OrderBinOpFn = fn (comptime lhs: []const u8, comptime rhs: []const u8) callconv(.Inline) comath.Order;
 
 pub fn parseExpr(
     comptime expr: []const u8,
@@ -51,8 +53,8 @@ fn ParseExprTester(
         inline fn matchBinOp(comptime str: []const u8) bool {
             return @hasField(BinOp, str);
         }
-        inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) operator.Order {
-            return @as(operator.Relation, @field(relations, lhs)).order(@field(relations, rhs));
+        inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) comath.Order {
+            return @as(comath.Relation, @field(relations, lhs)).order(@field(relations, rhs));
         }
     };
 }
@@ -116,13 +118,13 @@ test parseExpr {
         enum { @"-", @"~", @"!" },
         enum { @"-", @"+", @"*", @"/", @"^", @"<", @">" },
         .{
-            .@"<" = operator.relation(.none, 0),
-            .@">" = operator.relation(.none, 0),
-            .@"-" = operator.relation(.left, 1),
-            .@"+" = operator.relation(.left, 1),
-            .@"*" = operator.relation(.left, 2),
-            .@"/" = operator.relation(.left, 2),
-            .@"^" = operator.relation(.right, 3),
+            .@"<" = comath.relation(.none, 0),
+            .@">" = comath.relation(.none, 0),
+            .@"-" = comath.relation(.left, 1),
+            .@"+" = comath.relation(.left, 1),
+            .@"*" = comath.relation(.left, 2),
+            .@"/" = comath.relation(.left, 2),
+            .@"^" = comath.relation(.right, 3),
         },
     );
 
