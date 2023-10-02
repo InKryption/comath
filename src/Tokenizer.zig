@@ -159,7 +159,7 @@ fn peekImpl(
         var tokenizer = tokenizer_init;
         switch ((buffer ++ &[_:0]u8{})[tokenizer.index]) {
             ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff => {
-                const whitespace_end = util.indexOfNonePosComptime(u8, buffer, tokenizer.index + 1, whitespace_characters) orelse buffer.len;
+                const whitespace_end = util.indexOfNonePosComptime(u8, buffer[0..].*, tokenizer.index + 1, whitespace_characters[0..].*) orelse buffer.len;
                 tokenizer.index = whitespace_end;
             },
             else => {},
@@ -204,7 +204,7 @@ fn peekImpl(
         '_',
         => {
             const start = tokenizer.index;
-            const end = util.indexOfNonePosComptime(u8, buffer, start + 1, identifier_characters) orelse buffer.len;
+            const end = util.indexOfNonePosComptime(u8, buffer[0..].*, start + 1, identifier_characters[0..].*) orelse buffer.len;
             const ident = util.dedupe.scalarSlice(u8, buffer[start..end].*);
             return .{
                 .state = .{ .index = end },
@@ -212,8 +212,8 @@ fn peekImpl(
             };
         },
         '.' => {
-            const start = util.indexOfNonePosComptime(u8, buffer, tokenizer.index + 1, whitespace_characters) orelse buffer.len;
-            const end = util.indexOfNonePosComptime(u8, buffer, @min(buffer.len, start + 1), identifier_characters ++ operator_characters) orelse buffer.len;
+            const start = util.indexOfNonePosComptime(u8, buffer[0..].*, tokenizer.index + 1, whitespace_characters[0..].*) orelse buffer.len;
+            const end = util.indexOfNonePosComptime(u8, buffer[0..].*, @min(buffer.len, start + 1), field_access_characters[0..].*) orelse buffer.len;
             const ident = util.dedupe.scalarSlice(u8, buffer[start..end].*);
             if (ident.len == 0 or
                 !util.containsScalarComptime(u8, field_access_characters[0..].*, ident[0]) //
@@ -242,7 +242,7 @@ fn peekImpl(
         },
         else => |first_byte| {
             const start = tokenizer.index;
-            const end = util.indexOfNonePosComptime(u8, buffer, start, operator_characters) orelse buffer.len;
+            const end = util.indexOfNonePosComptime(u8, buffer[0..].*, start, operator_characters[0..].*) orelse buffer.len;
             if (start == end) return .{
                 .state = .{ .index = end + 1 },
                 .token = .{ .err = .{ .unexpected_byte = first_byte } },

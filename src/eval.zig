@@ -447,7 +447,7 @@ test eval {
                 1 => lhs[rhs[0]],
                 else => @shuffle(
                     std.meta.Elem(@TypeOf(lhs)),
-                    util.implicitDeref(lhs[0..]),
+                    lhs[0..].*,
                     undefined,
                     @as([rhs.len]comptime_int, rhs),
                 ),

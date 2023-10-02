@@ -3,6 +3,8 @@ const comath = @import("main.zig");
 const operator = comath.operator;
 const util = @import("util");
 
+const contexts = @This();
+
 pub fn DefaultEvalNumberLiteral(comptime src: []const u8) type {
     return switch (std.zig.parseNumberLiteral(src)) {
         .int, .big_int => comptime_int,

@@ -113,119 +113,57 @@ pub inline fn orderComptime(comptime T: type, comptime a: []const T, comptime b:
     return if (a[diff] < b[diff]) .lt else .gt;
 }
 
-pub inline fn trimScalarComptime(
+pub fn indexOfNonePosComptime(
     comptime T: type,
-    comptime input: []const T,
-    comptime needle: T,
-    comptime sides: enum { left, both, right },
-) []const T {
-    comptime {
-        const needle_vec: @Vector(input.len, T) = @splat(needle);
-        const matches = needle_vec != input[0..].*;
-        const mask: std.meta.Int(.unsigned, input.len) = @bitCast(matches);
-        const start = switch (sides) {
-            .left, .both => @ctz(mask),
-            .right => 0,
-        };
-        const end = switch (sides) {
-            .right, .both => input.len - @clz(mask),
-            .left => input.len,
-        };
-        return input[start..end];
-    }
-}
-
-pub inline fn replaceAnyWithScalarComptime(
-    comptime T: type,
-    comptime input: []const T,
-    comptime needles: []const T,
-    comptime replacement: T,
-) [input.len]T {
-    comptime {
-        @setEvalBranchQuota(needles.len * 2 + 1);
-        var matches: @Vector(input.len, bool) = .{false} ** input.len;
-        const BitVec = @Vector(matches.len, u1);
-        for (needles) |needle| {
-            const needle_vec: @Vector(input.len, T) = @splat(needle);
-
-            const match_bits: BitVec = @bitCast(matches);
-            const eql_bits: BitVec = @bitCast(needle_vec == input[0..].*);
-            matches = @bitCast(match_bits | eql_bits);
-        }
-        const replacement_vec: @Vector(input.len, T) = @splat(replacement);
-        return @select(T, matches, replacement_vec, input[0..].*);
-    }
-}
-
-pub inline fn indexOfNonePosComptime(
-    comptime T: type,
-    comptime haystack: []const T,
+    comptime haystack: anytype,
     comptime start: comptime_int,
-    comptime excluded: []const T,
+    comptime excluded: anytype,
 ) ?comptime_int {
-    const offs = indexOfNoneComptime(T, haystack[start..], excluded) orelse
+    if (@TypeOf(haystack) != [haystack.len]T) unreachable;
+    const offs = indexOfNoneComptime(T, haystack[start..].*, excluded) orelse
         return null;
     return start + offs;
 }
 
-pub const indexOfNoneComptime = struct {
-    fn indexOfNoneComptime(
-        comptime T: type,
-        comptime haystack: []const T,
-        comptime excluded: []const T,
-    ) ?comptime_int {
-        const dd_hs = dedupe.scalarSlice(T, haystack[0..].*);
-        const dd_ex = dedupe.scalarSlice(T, excluded[0..].*);
-        return indexOfNoneComptimeImpl(T, dd_hs, dd_ex);
+pub fn indexOfNoneComptime(
+    comptime T: type,
+    comptime haystack: anytype,
+    comptime excluded: anytype,
+) ?comptime_int {
+    if (@TypeOf(haystack) != [haystack.len]T) unreachable;
+    if (@TypeOf(excluded) != [excluded.len]T) unreachable;
+    if (excluded.len == 0) unreachable;
+
+    if (haystack.len == 0) return null;
+
+    const len = haystack.len;
+
+    var mask_bit_vec: @Vector(len, u1) = .{@intFromBool(true)} ** len;
+    @setEvalBranchQuota(@min(std.math.maxInt(u32), (excluded.len + 1) * 100));
+    for (excluded) |ex| {
+        const ex_vec: @Vector(len, T) = @splat(ex);
+        const match_bits: @Vector(len, u1) = @bitCast(haystack != ex_vec);
+        mask_bit_vec = mask_bit_vec & match_bits;
     }
-    fn indexOfNoneComptimeImpl(
-        comptime T: type,
-        comptime haystack: []const T,
-        comptime excluded: []const T,
-    ) ?comptime_int {
-        assert(excluded.len != 0);
-        if (haystack.len == 0) return null;
 
-        const arr = haystack[0..].*;
-
-        var trues: @Vector(arr.len, bool) = .{true} ** arr.len;
-        const BitVec = @Vector(arr.len, u1);
-        @setEvalBranchQuota(@min(std.math.maxInt(u32), (excluded.len + 1) * 100));
-        for (excluded) |ex| {
-            const ex_vec: @Vector(arr.len, T) = @splat(ex);
-            const current = arr != ex_vec;
-
-            const trues_bits: BitVec = @bitCast(trues);
-            const current_bits: BitVec = @bitCast(current);
-            trues = @bitCast(trues_bits & current_bits);
-        }
-
-        const mask: std.meta.Int(.unsigned, arr.len) = @bitCast(trues);
-        const idx = @ctz(mask);
-        return if (idx == haystack.len) null else idx;
-    }
-}.indexOfNoneComptime;
+    const mask: std.meta.Int(.unsigned, len) = @bitCast(mask_bit_vec);
+    const idx = @ctz(mask);
+    return if (idx == haystack.len) null else idx;
+}
 
 pub inline fn containsScalarComptime(
     comptime T: type,
     comptime haystack: anytype,
     comptime needle: T,
 ) bool {
-    if (@TypeOf(haystack) != [haystack.len]T) unreachable;
-    const needle_vec: @Vector(haystack.len, T) = @splat(needle);
-    const matches = haystack == needle_vec;
-    return @reduce(.Or, matches);
+    comptime {
+        if (@TypeOf(haystack) != [haystack.len]T) unreachable;
+        const needle_vec: @Vector(haystack.len, T) = @splat(needle);
+        const matches = haystack == needle_vec;
+        return @reduce(.Or, matches);
+    }
 }
 
-pub inline fn implicitDeref(ptr_or_val: anytype) ImplicitDeref(@TypeOf(ptr_or_val)) {
-    return switch (@typeInfo(@TypeOf(ptr_or_val))) {
-        .Pointer => |info| switch (info.size) {
-            .One => ptr_or_val.*,
-            else => ptr_or_val,
-        },
-        else => ptr_or_val,
-    };
-}
 pub fn ImplicitDeref(comptime T: type) type {
     return switch (@typeInfo(T)) {
         .Pointer => |info| switch (info.size) {
