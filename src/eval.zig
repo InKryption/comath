@@ -1,12 +1,8 @@
-const std = @import("std");
-const assert = std.debug.assert;
-
 const comath = @import("main.zig");
-const util = @import("util");
-const Tokenizer = @import("Tokenizer.zig");
 const parse = @import("parse.zig");
-
-const Number = @import("main.zig").Number;
+const std = @import("std");
+const Tokenizer = @import("Tokenizer.zig");
+const util = @import("util");
 
 /// Evaluates `expr` as an expression, wherein the operations are defined
 /// by `ctx`, and the values of variables may be set via `inputs`.
@@ -133,6 +129,7 @@ pub inline fn eval(
     return evalImpl(root, ctx, inputs);
 }
 
+/// Returns the type used to represent the result of evaluating the `expr` with the given context and inputs.
 pub fn Eval(
     comptime expr: []const u8,
     comptime Ctx: type,
@@ -414,8 +411,8 @@ test eval {
             return @field(relations, lhs).order(@field(relations, rhs));
         }
 
-        pub const EvalNumberLiteral = comath.contexts.DefaultEvalNumberLiteral;
-        pub const evalNumberLiteral = comath.contexts.defaultEvalNumberLiteral;
+        pub const EvalNumberLiteral = comath.ctx.DefaultEvalNumberLiteral;
+        pub const evalNumberLiteral = comath.ctx.defaultEvalNumberLiteral;
 
         pub fn EvalIdent(comptime ident: []const u8) type {
             _ = ident;

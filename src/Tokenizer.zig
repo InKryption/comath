@@ -1,6 +1,4 @@
 const std = @import("std");
-const assert = std.debug.assert;
-
 const util = @import("util");
 
 const Tokenizer = @This();
@@ -232,7 +230,7 @@ fn peekImpl(
             var zig_tokenizer = std.zig.Tokenizer.init(buffer[start..] ++ &[_:0]u8{});
             const zig_tok = zig_tokenizer.next();
 
-            assert(zig_tok.loc.start == 0);
+            if (zig_tok.loc.start != 0) unreachable;
             const literal_src = util.dedupe.scalarSlice(u8, buffer[start..][zig_tok.loc.start..zig_tok.loc.end].*);
 
             return .{

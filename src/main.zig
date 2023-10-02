@@ -6,11 +6,12 @@ const comath = @This();
 pub const Eval = @import("eval.zig").Eval;
 pub const eval = @import("eval.zig").eval;
 
-pub const contexts = @import("contexts.zig");
+/// Namespace of useful pre-built and composable contexts and tools for creating contexts.
+pub const ctx = @import("contexts.zig");
 
 comptime {
     _ = @import("eval.zig");
-    _ = contexts;
+    _ = ctx;
 }
 
 /// Relative order of chained operators
@@ -33,6 +34,8 @@ pub inline fn relation(
         .prec = prec,
     };
 }
+
+/// Represents the relation of an operator to other operators in terms of associativity and precedence.
 pub const Relation = struct {
     assoc: Associativity,
     prec: comptime_int,
@@ -44,7 +47,7 @@ pub const Relation = struct {
     };
 
     pub inline fn order(comptime lhs: Relation, comptime rhs: Relation) comath.Order {
-        return switch (std.math.order(lhs.prec, rhs.prec)) {
+        comptime return switch (std.math.order(lhs.prec, rhs.prec)) {
             .lt => .lt,
             .gt => .gt,
             .eq => if (lhs.assoc != rhs.assoc) .incompatible else switch (lhs.assoc) {
