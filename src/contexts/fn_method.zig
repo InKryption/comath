@@ -9,6 +9,11 @@ pub inline fn fnMethodCtx(
     /// ie `.{ .@"+" = "add", .@"-" = &.{ "sub", "neg" } }`
     comptime method_names: anytype,
 ) FnMethodCtx(@TypeOf(sub_ctx), method_names) {
+    const SubCtx = @TypeOf(sub_ctx);
+    if (util.NamespaceOf(SubCtx) == null) @compileError(
+        "Expected struct/union/enum, or pointer to struct/union/enum/opaque, got '" ++ @typeName(SubCtx) ++ "'" ++
+            if (SubCtx != type) "" else " (" ++ @typeName(sub_ctx) ++ ")",
+    );
     return .{ .sub_ctx = sub_ctx };
 }
 pub fn FnMethodCtx(
@@ -24,6 +29,7 @@ pub fn FnMethodCtx(
     return struct {
         sub_ctx: SubCtx,
         const Self = @This();
+        const Ns = util.NamespaceOf(SubCtx) orelse struct {};
 
         pub const allow_unused_inputs = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
 
@@ -35,7 +41,7 @@ pub fn FnMethodCtx(
             return @hasDecl(Ns, "matchBinOp") and Ns.matchBinOp(str);
         }
 
-        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) comath.Order {
+        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?comath.Order {
             return Ns.orderBinOp(lhs, rhs);
         }
 
@@ -170,17 +176,6 @@ pub fn FnMethodCtx(
             }
             return ctx.sub_ctx.evalBinOp(lhs, op, rhs);
         }
-
-        const Ns = switch (@typeInfo(SubCtx)) {
-            .Struct, .Union, .Enum => SubCtx,
-            .Pointer => |pointer| if (pointer.size != .One)
-                struct {}
-            else switch (@typeInfo(pointer.child)) {
-                .Struct, .Union, .Enum, .Opaque => pointer.child,
-                else => struct {},
-            },
-            else => struct {},
-        };
     };
 }
 
@@ -344,5 +339,4 @@ test fnMethodCtx {
     try util.testing.expectEqual(CustomNum.from(62), comath.eval("num(31)(2)", fm_ctx, .{
         .num = CustomNum.from,
     }));
-    return error.foo;
 }

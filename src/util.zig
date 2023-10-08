@@ -2,6 +2,21 @@ const std = @import("std");
 
 const util = @This();
 
+pub fn NamespaceOf(comptime T: type) ?type {
+    return switch (@typeInfo(T)) {
+        .Struct, .Union, .Enum => T,
+        .Pointer => |pointer| blk: {
+            if (pointer.size != .One) break :blk null;
+            if (pointer.child == anyopaque) break :blk null;
+            break :blk switch (@typeInfo(pointer.child)) {
+                .Struct, .Union, .Enum => pointer.child,
+                else => break :blk null,
+            };
+        },
+        else => null,
+    };
+}
+
 pub const testing = struct {
     pub inline fn expectEqual(a: anytype, b: anytype) !void {
         const T = @TypeOf(a, b);

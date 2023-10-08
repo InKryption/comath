@@ -37,7 +37,7 @@ which can be described in pseudo-code as:
 
     /// Returns the order of the binary operators `lhs` and `rhs`, where `matchBinOp(lhs) = true`, and
     /// `matchBinOp(rhs) = true`.
-    pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) Order {...}
+    pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?Order {...}
 
     /// Determines the value and type of number literals.
     pub fn EvalNumberLiteral(comptime src: []const u8) type {...}

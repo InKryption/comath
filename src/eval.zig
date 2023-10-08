@@ -49,13 +49,14 @@ const util = @import("util");
 ///         Function receiving a string of symbols, which should return true for any string of
 ///         symbols matching a recognized binary operator.
 ///
-///     + `orderBinOp: fn (comptime lhs: []const u8, comptime rhs: []const u8) callconv(.Inline) operator.Order`
+///     + `orderBinOp: fn (comptime lhs: []const u8, comptime rhs: []const u8) callconv(.Inline) ?operator.Order`
 ///         Function receiving a pair of strings representing two chained binary operators,
 ///         wherein for both `matchBinOp(s) = true`, which should return the ordering relation
 ///         between the two. For example, given an expression `a $ b @ c`:
 ///             - With `orderBinOp("$", "@") = .lt`           => the expression will be interpreted as `a $ (b @ c)`.
 ///             - With `orderBinOp("$", "@") = .gt`           => the expression will be interpreted as `(a $ b) @ c`.
-///             - With `orderBinOp("$", "@") = .incompatible` => the expression will be considered invalid.
+///             - With `orderBinOp("$", "@") = .incompatible` => the expression will be considered invalid, and issue an error about unchainable operators.
+///             - With `orderBinOp("$", "@") = null`          => the expression will be considered invalid, and may issue an error about an undefined operator relationship.
 ///
 ///     + `EvalNumberLiteral: fn (comptime src: []const u8) type`
 ///     + `evalNumberLiteral: fn (comptime src: []const u8) EvalNumberLiteral(src)`
@@ -100,10 +101,10 @@ pub inline fn eval(
     inputs: anytype,
 ) !Eval(expr, @TypeOf(ctx), @TypeOf(inputs)) {
     const Ctx = @TypeOf(ctx);
-    const Ns = switch (@typeInfo(Ctx)) {
-        .Pointer => @TypeOf(ctx.*),
-        else => Ctx,
-    };
+    const Ns = util.NamespaceOf(Ctx) orelse @compileError(std.fmt.comptimePrint(
+        "Expected struct/union/enum, or pointer to struct/union/enum/opaque, instead got `{s}`, which has no associated namespace",
+        .{@typeName(Ctx)},
+    ));
     const allow_unused_inputs: bool =
         @hasDecl(Ns, "allow_unused_inputs") and
         Ns.allow_unused_inputs;
@@ -135,16 +136,7 @@ pub fn Eval(
     comptime Ctx: type,
     comptime Inputs: type,
 ) type {
-    const Ns = switch (@typeInfo(Ctx)) {
-        .Struct, .Union, .Enum => Ctx,
-        .Pointer => |pointer| if (pointer.size != .One)
-            struct {}
-        else switch (@typeInfo(pointer.child)) {
-            .Struct, .Union, .Enum, .Opaque => pointer.child,
-            else => struct {},
-        },
-        else => struct {},
-    };
+    const Ns = util.NamespaceOf(Ctx) orelse struct {};
     const root = parse.parseExpr(
         expr,
         if (@hasDecl(Ns, "matchUnOp")) Ns.matchUnOp else null,
@@ -211,16 +203,8 @@ fn EvalImpl(
     comptime Inputs: type,
 ) type {
     const Ns = switch (@typeInfo(Ctx)) {
-        .Struct, .Union, .Enum => Ctx,
-        .Pointer => |pointer| Ns: {
-            if (pointer.size != .One) break :Ns struct {};
-            if (pointer.child == anyopaque) break :Ns struct {};
-            break :Ns switch (@typeInfo(pointer.child)) {
-                .Struct, .Union, .Enum, .Opaque => pointer.child,
-                else => struct {},
-            };
-        },
-        else => struct {},
+        .Pointer => |pointer| pointer.child,
+        else => Ctx,
     };
     return switch (expr) {
         .null => noreturn,
@@ -266,16 +250,8 @@ inline fn evalImpl(
 ) !EvalImpl(expr, @TypeOf(ctx), @TypeOf(inputs)) {
     const Ctx = @TypeOf(ctx);
     const Ns = switch (@typeInfo(Ctx)) {
-        .Struct, .Union, .Enum => Ctx,
-        .Pointer => |pointer| Ns: {
-            if (pointer.size != .One) break :Ns struct {};
-            if (pointer.child == anyopaque) break :Ns struct {};
-            break :Ns switch (@typeInfo(pointer.child)) {
-                .Struct, .Union, .Enum, .Opaque => pointer.child,
-                else => struct {},
-            };
-        },
-        else => struct {},
+        .Pointer => |pointer| pointer.child,
+        else => Ctx,
     };
 
     const Inputs = @TypeOf(inputs);
@@ -407,7 +383,7 @@ test eval {
             .@"*" = comath.relation(.left, 1),
             .@"/" = comath.relation(.left, 1),
         };
-        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) comath.Order {
+        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?comath.Order {
             return @field(relations, lhs).order(@field(relations, rhs));
         }
 

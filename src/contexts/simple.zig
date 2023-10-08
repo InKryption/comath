@@ -24,12 +24,18 @@ const relations = .{
 };
 
 pub inline fn simpleCtx(sub_ctx: anytype) SimpleCtx(@TypeOf(sub_ctx)) {
+    const SubCtx = @TypeOf(sub_ctx);
+    if (util.NamespaceOf(SubCtx) == null and SubCtx != void) @compileError(
+        "Expected struct/union/enum, or pointer to struct/union/enum/opaque, got '" ++ @typeName(SubCtx) ++ "'" ++
+            if (SubCtx != type) "" else " (" ++ @typeName(sub_ctx) ++ ")",
+    );
     return .{ .sub_ctx = sub_ctx };
 }
 pub fn SimpleCtx(comptime SubCtx: type) type {
     return struct {
         sub_ctx: SubCtx,
         const Self = @This();
+        const Ns = util.NamespaceOf(SubCtx) orelse struct {};
 
         pub const allow_unused_inputs = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
 
@@ -43,7 +49,7 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
             return sub_match or @hasField(BinOp, str);
         }
 
-        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) comath.Order {
+        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?comath.Order {
             if (@hasDecl(Ns, "orderBinOp")) blk: {
                 const order = Ns.orderBinOp(lhs, rhs) orelse break :blk;
                 return order;
@@ -232,17 +238,6 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                 },
             };
         }
-
-        const Ns = switch (@typeInfo(SubCtx)) {
-            .Struct, .Union, .Enum => SubCtx,
-            .Pointer => |pointer| if (pointer.size != .One)
-                struct {}
-            else switch (@typeInfo(pointer.child)) {
-                .Struct, .Union, .Enum, .Opaque => pointer.child,
-                else => struct {},
-            },
-            else => struct {},
-        };
     };
 }
 

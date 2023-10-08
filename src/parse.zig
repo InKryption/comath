@@ -6,10 +6,9 @@ const assert = std.debug.assert;
 const util = @import("util");
 
 const Tokenizer = @import("Tokenizer.zig");
-// const operator = @import("operator.zig");
 
 const MatchOpFn = fn (comptime str: []const u8) callconv(.Inline) bool;
-const OrderBinOpFn = fn (comptime lhs: []const u8, comptime rhs: []const u8) callconv(.Inline) comath.Order;
+const OrderBinOpFn = fn (comptime lhs: []const u8, comptime rhs: []const u8) callconv(.Inline) ?comath.Order;
 
 pub fn parseExpr(
     comptime expr: []const u8,
@@ -53,8 +52,11 @@ fn ParseExprTester(
         inline fn matchBinOp(comptime str: []const u8) bool {
             return @hasField(BinOp, str);
         }
-        inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) comath.Order {
-            return @as(comath.Relation, @field(relations, lhs)).order(@field(relations, rhs));
+        inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?comath.Order {
+            comptime if (!matchBinOp(lhs) or !matchBinOp(rhs)) return null;
+            const lhs_rel: comath.Relation = if (@hasField(@TypeOf(relations), lhs)) @field(relations, lhs) else return null;
+            const rhs_rel: comath.Relation = if (@hasField(@TypeOf(relations), rhs)) @field(relations, rhs) else return null;
+            return lhs_rel.order(rhs_rel);
         }
     };
 }
@@ -116,7 +118,7 @@ test parseExpr {
     const funcCall = helper.funcCall;
     const Tester = ParseExprTester(
         enum { @"-", @"~", @"!" },
-        enum { @"-", @"+", @"*", @"/", @"^", @"<", @">" },
+        enum { @"-", @"+", @"*", @"/", @"^", @"<", @">", @"&" },
         .{
             .@"<" = comath.relation(.none, 0),
             .@">" = comath.relation(.none, 0),
@@ -210,13 +212,33 @@ test parseExpr {
         ),
     );
 
-    // errors
-    // TODO: cover more cases
     try Tester.expectEqual("foo bar", err("Unexpected token 'bar'"));
     try Tester.expectEqual("foo )", err("Unexpected closing parentheses"));
     try Tester.expectEqual("foo (", err("Missing closing parentheses"));
     try Tester.expectEqual("foo (a,", err("Missing closing parentheses"));
     try Tester.expectEqual("a < b < c", err("'<' cannot be chained with '<'"));
+    try Tester.expectEqual("$a", err("Unexpected operator symbols '$'"));
+    try Tester.expectEqual("$a # b", err("Unexpected operator symbols '#'"));
+    try Tester.expectEqual("$a / b", err("Unexpected operator symbols '$'"));
+    try Tester.expectEqual("a $ b # c", err("Unexpected operator symbols '$'"));
+
+    try Tester.expectEqual("a & b + 1", err("No precedence/associativity defined between operators '&' and '+'"));
+    try Tester.expectEqual(
+        "(a & b) + 1",
+        binOp(
+            group(binOp(ident("a"), "&", ident("b"))),
+            "+",
+            number("1"),
+        ),
+    );
+    try Tester.expectEqual(
+        "a & (b + 1)",
+        binOp(
+            ident("a"),
+            "&",
+            group(binOp(ident("b"), "+", number("1"))),
+        ),
+    );
 }
 
 const NestType = enum(comptime_int) { none, paren, bracket };
@@ -490,9 +512,11 @@ pub const ExprNode = union(enum(comptime_int)) {
                     const orderBinOp = maybeOrderBinOp orelse break :blk .{
                         .err = "No `orderBinOp` function was given to determine the order between '" ++ lhs_bin.op ++ "', '" ++ mid_bin.op ++ "', and '" ++ op ++ "'",
                     };
-                    if (orderBinOp(lhs_bin.op, mid_bin.op) != .lt) unreachable;
+                    if (orderBinOp(lhs_bin.op, mid_bin.op).? != .lt) unreachable;
 
-                    const order = orderBinOp(mid_bin.op, op);
+                    const order = orderBinOp(mid_bin.op, op) orelse break :blk .{
+                        .err = "No precedence/associativity defined between operators '" ++ mid_bin.op ++ "' and '" ++ op ++ "'",
+                    };
                     break :blk switch (order) {
                         .incompatible => .{ .err = lhs_bin.op ++ " cannot be chained with " ++ op },
                         .lt => .{ .bin_op = &.{
@@ -519,8 +543,9 @@ pub const ExprNode = union(enum(comptime_int)) {
                     const orderBinOp = maybeOrderBinOp orelse break :blk .{
                         .err = "No `orderBinOp` function was given to determine the order between '" ++ lhs_bin.op ++ "', and '" ++ op ++ "'",
                     };
-
-                    const order = orderBinOp(lhs_bin.op, op);
+                    const order = orderBinOp(lhs_bin.op, op) orelse break :blk .{
+                        .err = "No precedence/associativity defined between operators '" ++ lhs_bin.op ++ "' and '" ++ op ++ "'",
+                    };
                     break :blk switch (order) {
                         .incompatible => .{ .err = "'" ++ lhs_bin.op ++ "'" ++ " cannot be chained with '" ++ op ++ "'" },
                         .lt => .{ .bin_op = &.{
