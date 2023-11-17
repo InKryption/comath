@@ -152,7 +152,7 @@ pub fn indexOfNoneComptime(
 
     const len = haystack.len;
 
-    var mask_bit_vec: @Vector(len, u1) = .{@intFromBool(true)} ** len;
+    var mask_bit_vec: @Vector(len, u1) = [_]u1{@intFromBool(true)} ** len;
     @setEvalBranchQuota(@min(std.math.maxInt(u32), (excluded.len + 1) * 100));
     for (excluded) |ex| {
         const ex_vec: @Vector(len, T) = @splat(ex);
