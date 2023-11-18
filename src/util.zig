@@ -157,7 +157,7 @@ pub fn indexOfNoneComptime(
     for (excluded) |ex| {
         const ex_vec: @Vector(len, T) = @splat(ex);
         const match_bits: @Vector(len, u1) = @bitCast(haystack != ex_vec);
-        mask_bit_vec = mask_bit_vec & match_bits;
+        mask_bit_vec &= match_bits;
     }
 
     const mask: std.meta.Int(.unsigned, len) = @bitCast(mask_bit_vec);
