@@ -64,8 +64,8 @@ const util = @import("util");
 ///
 ///     + `EvalIdent: fn (comptime ident: []const u8) type`
 ///     + `evalIdent: fn (ctx: @This(), comptime ident: []const u8) !EvalIdent(ident)`
-///         Returns the value of the identifier. `EvalIdent(ident) = noreturn` will
-///         make the function get the value from the `inputs` struct.
+///         Returns the value of the identifier. `EvalIdent(ident) = noreturn` will make the
+///         function get the value from the field of the `inputs` with the matching name.
 ///
 ///     + `EvalProperty: fn (comptime Lhs: type, comptime field: []const u8) type`
 ///     + `evalProperty: fn (ctx: @This(), lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field)`
@@ -81,6 +81,15 @@ const util = @import("util");
 ///         Returns the value that should result from an expression `callee(args...)`, where each of the elements of the tuple `args`
 ///         are the arguments that should be passed to `callee`.
 ///
+///     + `EvalMethodCall: fn (comptime SelfParam: type, comptime method: []const u8, comptime Args: type) type`
+///     + `evalMethodCall: fn (ctx: @This(), self_param: anytype, comptime method: []const u8, args: anytype) !EvalMethodCall(@TypeOf(self_param), method, @TypeOf(args))`
+///         Returns the value that should result from an expression `self_param.method(args...)`, where each of the elements of the tuple `args`
+///         are the arguments that should be passed to `method`, possibly in addition to the `self_param`.
+///         This is a specialisation of `expr(args...)` which specifically represents `expr.access(args...)` which would otherwise
+///         be interpreted as `(expr.access)(args...)`. This allows for the context to define method-like calls more easily.
+///         If `EvalMethodCall(S, m, A) = noreturn`, it will be interpreted as `(self_param.method)(args...)`,
+///         falling back to `evalFuncCall(evalProperty(self_param, method), args)`.
+///
 ///     + `EvalUnOp: fn (comptime op: UnOp, comptime T: type) type`
 ///     + `evalUnOp: fn (ctx: @This(), comptime op: UnOp, value: anytype) !EvalUnOp(op, @TypeOf(value))`
 ///         Returns the value that should result from an expression `op value`.
@@ -94,7 +103,6 @@ const util = @import("util");
 ///
 /// * `inputs`:
 /// a non-tuple struct literal whose field names correspond to identifiers in the `expr` source code
-///
 pub inline fn eval(
     comptime expr: []const u8,
     ctx: anytype,
@@ -227,6 +235,16 @@ fn EvalImpl(
             break :blk Ns.EvalIndexAccess(Lhs, Rhs);
         },
         .func_call => |fc| blk: {
+            switch (fc.callee) {
+                .field_access => |fa| method: {
+                    const SelfParam = EvalImpl(fa.accessed, Ctx, Inputs);
+                    const Args = EvalExprTupleImpl(fc.args, Ctx, Inputs);
+                    const MethodResult = Ns.EvalMethodCall(SelfParam, fa.accessor, Args);
+                    if (MethodResult == noreturn) break :method;
+                    break :blk MethodResult;
+                },
+                else => {},
+            }
             const Callee = EvalImpl(fc.callee, Ctx, Inputs);
             const Args = EvalExprTupleImpl(fc.args, Ctx, Inputs);
             break :blk Ns.EvalFuncCall(Callee, Args);
@@ -287,6 +305,26 @@ inline fn evalImpl(
             break :blk ctx.evalIndexAccess(lhs, rhs);
         },
         .func_call => |fc| blk: {
+            switch (fc.callee) {
+                .field_access => |fa| method: {
+                    const SelfParam = EvalImpl(fa.accessed, Ctx, Inputs);
+                    const Args = EvalExprTupleImpl(fc.args, Ns, Inputs);
+
+                    if (Ns.EvalMethodCall(SelfParam, fa.accessor, Args) == noreturn) break :method;
+                    const self_param: SelfParam = try evalImpl(fa.accessed, ctx, inputs);
+
+                    const args: Args = args: {
+                        if (comptime util.typeIsComptimeOnly(Args).?) {
+                            break :args try comptime evalExprTupleImpl(fc.args, ctx, inputs);
+                        } else {
+                            break :args try evalExprTupleImpl(fc.args, ctx, inputs);
+                        }
+                    };
+                    break :blk ctx.evalMethodCall(self_param, fa.accessor, args);
+                },
+                else => {},
+            }
+
             const Callee = EvalImpl(fc.callee, Ns, Inputs);
             const callee: Callee = try evalImpl(fc.callee, ctx, inputs);
 
@@ -394,7 +432,7 @@ test eval {
             _ = ident;
             return noreturn;
         }
-        pub fn evalIdent(ctx: @This(), comptime ident: []const u8) !EvalIdent(ident) {
+        pub fn evalIdent(ctx: @This(), comptime ident: []const u8) EvalIdent(ident) {
             _ = ctx;
             @compileError("Should not be referenced");
         }
@@ -432,6 +470,26 @@ test eval {
         }
         pub fn evalFuncCall(_: @This(), callee: anytype, args: anytype) EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
             return @call(.auto, callee, args);
+        }
+
+        pub fn EvalMethodCall(comptime SelfParam: type, comptime method: []const u8, comptime Args: type) type {
+            const SelfNs = util.ImplicitDeref(SelfParam);
+            _ = Args;
+            if (!@hasDecl(SelfNs, method)) return noreturn;
+            const MethodType = @TypeOf(@field(SelfNs, method));
+
+            if (@typeInfo(MethodType) != .Fn) return noreturn;
+            const params = @typeInfo(MethodType).Fn.params;
+
+            if (params.len == 0) return noreturn;
+            const Expected = util.ImplicitDeref(params[0].type orelse *const SelfParam);
+
+            if (SelfNs != Expected) return noreturn;
+            return @typeInfo(MethodType).Fn.return_type.?;
+        }
+        pub fn evalMethodCall(ctx: @This(), self_param: anytype, comptime method: []const u8, args: anytype) EvalMethodCall(@TypeOf(self_param), method, @TypeOf(args)) {
+            const func = @field(util.ImplicitDeref(@TypeOf(self_param)), method);
+            return ctx.evalFuncCall(func, .{self_param} ++ args);
         }
 
         pub fn EvalUnOp(comptime op: []const u8, comptime T: type) type {
@@ -493,6 +551,11 @@ test eval {
     try util.testing.expectEqual(-45, eval("(3 * -get15())", basic_ctx, .{ .get15 = test_fns.get15 }));
 
     try util.testing.expectEqual([_]u8{ 'a', 'b', 'c' }, eval("a[0, 2, 4]", basic_ctx, .{ .a = "a b c" }));
+    try util.testing.expectEqual(31, eval("a.b()", basic_ctx, .{ .a = struct {
+        fn b(_: @This()) u32 {
+            return 31;
+        }
+    }{} }));
 
     const PowCtx = struct {
         const BinOp = enum { @"^" };

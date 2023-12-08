@@ -30,217 +30,6 @@ pub fn parseExpr(
     }
 }
 
-fn ParseExprTester(
-    comptime UnOp: type,
-    comptime BinOp: type,
-    comptime relations: anytype,
-) type {
-    return struct {
-        fn expectEqual(
-            comptime expr: []const u8,
-            comptime expected: ExprNode,
-        ) !void {
-            const actual = comptime parseExpr(expr, matchUnOp, matchBinOp, orderBinOp);
-            if (!actual.eql(expected)) {
-                @compileError(std.fmt.comptimePrint("Expected `{}`, got `{}`", .{ expected.fmt(.{ .verbose_paren = true }), actual.fmt(.{ .verbose_paren = true }) }));
-            }
-        }
-
-        inline fn matchUnOp(comptime str: []const u8) bool {
-            return @hasField(UnOp, str);
-        }
-        inline fn matchBinOp(comptime str: []const u8) bool {
-            return @hasField(BinOp, str);
-        }
-        inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?comath.Order {
-            comptime if (!matchBinOp(lhs) or !matchBinOp(rhs)) return null;
-            const lhs_rel: comath.Relation = if (@hasField(@TypeOf(relations), lhs)) @field(relations, lhs) else return null;
-            const rhs_rel: comath.Relation = if (@hasField(@TypeOf(relations), rhs)) @field(relations, rhs) else return null;
-            return lhs_rel.order(rhs_rel);
-        }
-    };
-}
-
-test parseExpr {
-    const helper = struct {
-        inline fn number(comptime src: []const u8) ExprNode {
-            return .{ .number = src };
-        }
-        inline fn ident(comptime name: []const u8) ExprNode {
-            return .{ .ident = name };
-        }
-        inline fn group(comptime expr: ExprNode) ExprNode {
-            return .{ .group = &expr };
-        }
-        inline fn err(comptime str: []const u8) ExprNode {
-            return .{ .err = str };
-        }
-        inline fn binOp(comptime lhs: ExprNode, comptime op: []const u8, comptime rhs: ExprNode) ExprNode {
-            return .{ .bin_op = &.{
-                .lhs = lhs,
-                .op = op,
-                .rhs = rhs,
-            } };
-        }
-        inline fn unOp(comptime op: []const u8, comptime expr: ExprNode) ExprNode {
-            return .{ .un_op = &.{
-                .op = op,
-                .val = expr,
-            } };
-        }
-        inline fn fieldAccess(comptime expr: ExprNode, comptime field: []const u8) ExprNode {
-            return .{ .field_access = &.{
-                .accessed = expr,
-                .accessor = field,
-            } };
-        }
-        inline fn indexAccess(comptime lhs: ExprNode, comptime idx: []const ExprNode) ExprNode {
-            return .{ .index_access = &.{
-                .accessed = lhs,
-                .accessor = idx,
-            } };
-        }
-        inline fn funcCall(comptime callee: ExprNode, comptime args: []const ExprNode) ExprNode {
-            return .{ .func_call = &.{
-                .callee = callee,
-                .args = args,
-            } };
-        }
-    };
-    const number = helper.number;
-    const ident = helper.ident;
-    const group = helper.group;
-    const err = helper.err;
-    const binOp = helper.binOp;
-    const unOp = helper.unOp;
-    const fieldAccess = helper.fieldAccess;
-    const indexAccess = helper.indexAccess;
-    const funcCall = helper.funcCall;
-    const Tester = ParseExprTester(
-        enum { @"-", @"~", @"!" },
-        enum { @"-", @"+", @"*", @"/", @"^", @"<", @">", @"&" },
-        .{
-            .@"<" = comath.relation(.none, 0),
-            .@">" = comath.relation(.none, 0),
-            .@"-" = comath.relation(.left, 1),
-            .@"+" = comath.relation(.left, 1),
-            .@"*" = comath.relation(.left, 2),
-            .@"/" = comath.relation(.left, 2),
-            .@"^" = comath.relation(.right, 3),
-        },
-    );
-
-    try Tester.expectEqual("423_324", number("423_324"));
-    try Tester.expectEqual("-423_324", unOp("-", number("423_324")));
-    try Tester.expectEqual("~-423_324", unOp("~", unOp("-", number("423_324"))));
-    try Tester.expectEqual("~(-423_324)", unOp("~", group(unOp("-", number("423_324")))));
-    try Tester.expectEqual("!(0.3 + a ^ (3 / y.z))", unOp("!", group(binOp(
-        number("0.3"),
-        "+",
-        binOp(
-            ident("a"),
-            "^",
-            group(binOp(number("3"), "/", fieldAccess(ident("y"), "z"))),
-        ),
-    ))));
-    try Tester.expectEqual("3 + -2", binOp(
-        number("3"),
-        "+",
-        unOp("-", number("2")),
-    ));
-    try Tester.expectEqual("(y + 2) * x", binOp(
-        group(binOp(ident("y"), "+", number("2"))),
-        "*",
-        ident("x"),
-    ));
-    try Tester.expectEqual("y + 2 * x", binOp(
-        ident("y"),
-        "+",
-        binOp(number("2"), "*", ident("x")),
-    ));
-    try Tester.expectEqual("2.0 * y ^ 3", binOp(
-        number("2.0"),
-        "*",
-        binOp(ident("y"), "^", number("3")),
-    ));
-    try Tester.expectEqual("2 ^ 3 ^ 4", binOp(number("2"), "^", binOp(number("3"), "^", number("4"))));
-
-    try Tester.expectEqual("a.b", fieldAccess(ident("a"), "b"));
-    try Tester.expectEqual("a + b.c", binOp(ident("a"), "+", fieldAccess(ident("b"), "c")));
-    try Tester.expectEqual("(a + b).c", fieldAccess(group(binOp(ident("a"), "+", ident("b"))), "c"));
-    try Tester.expectEqual("foo.b@r", fieldAccess(ident("foo"), "b@r"));
-    try Tester.expectEqual("foo.?", fieldAccess(ident("foo"), "?"));
-    try Tester.expectEqual("foo.0", fieldAccess(ident("foo"), "0"));
-
-    try Tester.expectEqual("a[b]", indexAccess(ident("a"), &.{ident("b")}));
-    try Tester.expectEqual("(a)[(b)]", indexAccess(group(ident("a")), &.{group(ident("b"))}));
-    try Tester.expectEqual("(~(a + b))[(c)]", indexAccess(
-        group(unOp("~", group(binOp(ident("a"), "+", ident("b"))))),
-        &.{group(ident("c"))},
-    ));
-
-    try Tester.expectEqual("foo()", funcCall(ident("foo"), &.{}));
-    try Tester.expectEqual("foo(bar)", funcCall(ident("foo"), &.{ident("bar")}));
-    try Tester.expectEqual("foo(bar,)", funcCall(ident("foo"), &.{ident("bar")}));
-    try Tester.expectEqual("foo(bar,baz)", funcCall(ident("foo"), &.{ ident("bar"), ident("baz") }));
-    try Tester.expectEqual("foo(bar, baz, )", funcCall(ident("foo"), &.{ ident("bar"), ident("baz") }));
-
-    try Tester.expectEqual("foo[]", indexAccess(ident("foo"), &.{}));
-    try Tester.expectEqual("foo[bar]", indexAccess(ident("foo"), &.{ident("bar")}));
-    try Tester.expectEqual("foo[bar,]", indexAccess(ident("foo"), &.{ident("bar")}));
-    try Tester.expectEqual("foo[bar,baz]", indexAccess(ident("foo"), &.{ ident("bar"), ident("baz") }));
-    try Tester.expectEqual("foo[bar, baz, ]", indexAccess(ident("foo"), &.{ ident("bar"), ident("baz") }));
-
-    try Tester.expectEqual(
-        "6*1-3*1+4*1+2",
-        binOp(
-            binOp(
-                binOp(
-                    binOp(number("6"), "*", number("1")),
-                    "-",
-                    binOp(number("3"), "*", number("1")),
-                ),
-                "+",
-                binOp(
-                    number("4"),
-                    "*",
-                    number("1"),
-                ),
-            ),
-            "+",
-            number("2"),
-        ),
-    );
-
-    try Tester.expectEqual("foo bar", err("Unexpected token 'bar'"));
-    try Tester.expectEqual("foo )", err("Unexpected closing parentheses"));
-    try Tester.expectEqual("foo (", err("Missing closing parentheses"));
-    try Tester.expectEqual("foo (a,", err("Missing closing parentheses"));
-    try Tester.expectEqual("a < b < c", err("'<' cannot be chained with '<'"));
-    try Tester.expectEqual("$a", err("Unexpected operator symbols '$'"));
-    try Tester.expectEqual("$a # b", err("Unexpected operator symbols '#'"));
-    try Tester.expectEqual("$a / b", err("Unexpected operator symbols '$'"));
-    try Tester.expectEqual("a $ b # c", err("Unexpected operator symbols '$'"));
-
-    try Tester.expectEqual("a & b + 1", err("No precedence/associativity defined between operators '&' and '+'"));
-    try Tester.expectEqual(
-        "(a & b) + 1",
-        binOp(
-            group(binOp(ident("a"), "&", ident("b"))),
-            "+",
-            number("1"),
-        ),
-    );
-    try Tester.expectEqual(
-        "a & (b + 1)",
-        binOp(
-            ident("a"),
-            "&",
-            group(binOp(ident("b"), "+", number("1"))),
-        ),
-    );
-}
-
 const NestType = enum(comptime_int) { none, paren, bracket };
 const ParseExprImplInnerUpdate = struct {
     terminator: Terminator,
@@ -839,3 +628,202 @@ pub const ExprNode = union(enum(comptime_int)) {
         }
     };
 };
+
+fn ParseExprTester(
+    comptime UnOp: type,
+    comptime BinOp: type,
+    comptime relations: anytype,
+) type {
+    return struct {
+        fn expectEqual(
+            comptime expr: []const u8,
+            comptime expected: ExprNode,
+        ) !void {
+            const actual = comptime parseExpr(expr, matchUnOp, matchBinOp, orderBinOp);
+            if (!actual.eql(expected)) {
+                @compileError(std.fmt.comptimePrint("Expected `{}`, got `{}`", .{ expected.fmt(.{ .verbose_paren = true }), actual.fmt(.{ .verbose_paren = true }) }));
+            }
+        }
+
+        inline fn matchUnOp(comptime str: []const u8) bool {
+            return @hasField(UnOp, str);
+        }
+        inline fn matchBinOp(comptime str: []const u8) bool {
+            return @hasField(BinOp, str);
+        }
+        inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?comath.Order {
+            comptime if (!matchBinOp(lhs) or !matchBinOp(rhs)) return null;
+            const lhs_rel: comath.Relation = if (@hasField(@TypeOf(relations), lhs)) @field(relations, lhs) else return null;
+            const rhs_rel: comath.Relation = if (@hasField(@TypeOf(relations), rhs)) @field(relations, rhs) else return null;
+            return lhs_rel.order(rhs_rel);
+        }
+    };
+}
+
+const test_helpers = struct {
+    // zig fmt: off
+    inline fn number(comptime src: []const u8) ExprNode { return .{ .number = src }; }
+    inline fn ident(comptime name: []const u8) ExprNode { return .{ .ident = name }; }
+    inline fn group(comptime expr: ExprNode) ExprNode { return .{ .group = &expr }; }
+    inline fn err(comptime str: []const u8) ExprNode { return .{ .err = str }; }
+    // zig fmt: on
+    inline fn binOp(comptime lhs: ExprNode, comptime op: []const u8, comptime rhs: ExprNode) ExprNode {
+        return .{ .bin_op = &.{ .lhs = lhs, .op = op, .rhs = rhs } };
+    }
+    inline fn unOp(comptime op: []const u8, comptime expr: ExprNode) ExprNode {
+        return .{ .un_op = &.{ .op = op, .val = expr } };
+    }
+    inline fn fieldAccess(comptime expr: ExprNode, comptime field: []const u8) ExprNode {
+        return .{ .field_access = &.{ .accessed = expr, .accessor = field } };
+    }
+    inline fn indexAccess(comptime lhs: ExprNode, comptime idx: []const ExprNode) ExprNode {
+        return .{ .index_access = &.{ .accessed = lhs, .accessor = idx } };
+    }
+    inline fn funcCall(comptime callee: ExprNode, comptime args: []const ExprNode) ExprNode {
+        return .{ .func_call = &.{ .callee = callee, .args = args } };
+    }
+};
+
+test parseExpr {
+    const Tester = ParseExprTester(
+        enum { @"-", @"~", @"!" },
+        enum { @"-", @"+", @"*", @"/", @"^", @"<", @">", @"&" },
+        .{
+            .@"<" = comath.relation(.none, 0),
+            .@">" = comath.relation(.none, 0),
+            .@"-" = comath.relation(.left, 1),
+            .@"+" = comath.relation(.left, 1),
+            .@"*" = comath.relation(.left, 2),
+            .@"/" = comath.relation(.left, 2),
+            .@"^" = comath.relation(.right, 3),
+        },
+    );
+    const number = test_helpers.number;
+    const ident = test_helpers.ident;
+    const group = test_helpers.group;
+    const err = test_helpers.err;
+    const binOp = test_helpers.binOp;
+    const unOp = test_helpers.unOp;
+    const fieldAccess = test_helpers.fieldAccess;
+    const indexAccess = test_helpers.indexAccess;
+    const funcCall = test_helpers.funcCall;
+
+    try Tester.expectEqual("423_324", number("423_324"));
+    try Tester.expectEqual("-423_324", unOp("-", number("423_324")));
+    try Tester.expectEqual("~-423_324", unOp("~", unOp("-", number("423_324"))));
+    try Tester.expectEqual("~(-423_324)", unOp("~", group(unOp("-", number("423_324")))));
+    try Tester.expectEqual("!(0.3 + a ^ (3 / y.z))", unOp("!", group(binOp(
+        number("0.3"),
+        "+",
+        binOp(
+            ident("a"),
+            "^",
+            group(binOp(number("3"), "/", fieldAccess(ident("y"), "z"))),
+        ),
+    ))));
+    try Tester.expectEqual("3 + -2", binOp(
+        number("3"),
+        "+",
+        unOp("-", number("2")),
+    ));
+    try Tester.expectEqual("(y + 2) * x", binOp(
+        group(binOp(ident("y"), "+", number("2"))),
+        "*",
+        ident("x"),
+    ));
+    try Tester.expectEqual("y + 2 * x", binOp(
+        ident("y"),
+        "+",
+        binOp(number("2"), "*", ident("x")),
+    ));
+    try Tester.expectEqual("2.0 * y ^ 3", binOp(
+        number("2.0"),
+        "*",
+        binOp(ident("y"), "^", number("3")),
+    ));
+    try Tester.expectEqual("2 ^ 3 ^ 4", binOp(number("2"), "^", binOp(number("3"), "^", number("4"))));
+
+    try Tester.expectEqual("a.b", fieldAccess(ident("a"), "b"));
+    try Tester.expectEqual("a + b.c", binOp(ident("a"), "+", fieldAccess(ident("b"), "c")));
+    try Tester.expectEqual("(a + b).c", fieldAccess(group(binOp(ident("a"), "+", ident("b"))), "c"));
+    try Tester.expectEqual("foo.b@r", fieldAccess(ident("foo"), "b@r"));
+    try Tester.expectEqual("foo.?", fieldAccess(ident("foo"), "?"));
+    try Tester.expectEqual("foo.0", fieldAccess(ident("foo"), "0"));
+
+    try Tester.expectEqual("a[b]", indexAccess(ident("a"), &.{ident("b")}));
+    try Tester.expectEqual("(a)[(b)]", indexAccess(group(ident("a")), &.{group(ident("b"))}));
+    try Tester.expectEqual("(~(a + b))[(c)]", indexAccess(
+        group(unOp("~", group(binOp(ident("a"), "+", ident("b"))))),
+        &.{group(ident("c"))},
+    ));
+
+    try Tester.expectEqual("foo[]", indexAccess(ident("foo"), &.{}));
+    try Tester.expectEqual("foo[bar]", indexAccess(ident("foo"), &.{ident("bar")}));
+    try Tester.expectEqual("foo[bar,]", indexAccess(ident("foo"), &.{ident("bar")}));
+    try Tester.expectEqual("foo[bar,baz]", indexAccess(ident("foo"), &.{ ident("bar"), ident("baz") }));
+    try Tester.expectEqual("foo[bar, baz, ]", indexAccess(ident("foo"), &.{ ident("bar"), ident("baz") }));
+
+    try Tester.expectEqual("foo()", funcCall(ident("foo"), &.{}));
+    try Tester.expectEqual("foo(bar)", funcCall(ident("foo"), &.{ident("bar")}));
+    try Tester.expectEqual("foo(bar,)", funcCall(ident("foo"), &.{ident("bar")}));
+    try Tester.expectEqual("foo(bar,baz)", funcCall(ident("foo"), &.{ ident("bar"), ident("baz") }));
+    try Tester.expectEqual("foo(bar, baz, )", funcCall(ident("foo"), &.{ ident("bar"), ident("baz") }));
+
+    try Tester.expectEqual("a.b()", funcCall(
+        fieldAccess(ident("a"), "b"),
+        &.{},
+    ));
+    try Tester.expectEqual("a.b.c()", funcCall(
+        fieldAccess(fieldAccess(ident("a"), "b"), "c"),
+        &.{},
+    ));
+
+    try Tester.expectEqual(
+        "6*1-3*1+4*1+2",
+        binOp(
+            binOp(
+                binOp(
+                    binOp(number("6"), "*", number("1")),
+                    "-",
+                    binOp(number("3"), "*", number("1")),
+                ),
+                "+",
+                binOp(
+                    number("4"),
+                    "*",
+                    number("1"),
+                ),
+            ),
+            "+",
+            number("2"),
+        ),
+    );
+
+    try Tester.expectEqual("foo bar", err("Unexpected token 'bar'"));
+    try Tester.expectEqual("foo )", err("Unexpected closing parentheses"));
+    try Tester.expectEqual("foo (", err("Missing closing parentheses"));
+    try Tester.expectEqual("foo (a,", err("Missing closing parentheses"));
+    try Tester.expectEqual("a < b < c", err("'<' cannot be chained with '<'"));
+    try Tester.expectEqual("$a", err("Unexpected operator symbols '$'"));
+    try Tester.expectEqual("$a # b", err("Unexpected operator symbols '#'"));
+    try Tester.expectEqual("$a / b", err("Unexpected operator symbols '$'"));
+    try Tester.expectEqual("a $ b # c", err("Unexpected operator symbols '$'"));
+
+    try Tester.expectEqual("a & b + 1", err("No precedence/associativity defined between operators '&' and '+'"));
+    try Tester.expectEqual(
+        "(a & b) + 1",
+        binOp(
+            group(binOp(ident("a"), "&", ident("b"))),
+            "+",
+            number("1"),
+        ),
+    );
+    try Tester.expectEqual(
+        "a & (b + 1)",
+        binOp(
+            ident("a"),
+            "&",
+            group(binOp(ident("b"), "+", number("1"))),
+        ),
+    );
+}
