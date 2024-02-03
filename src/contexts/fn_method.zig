@@ -274,7 +274,7 @@ fn DedupedMethodNames(comptime method_names: anytype) type {
         };
         const old_value: T = @as(*align(1) const old.type, @ptrCast(old.default_value)).*;
         new.* = .{
-            .name = util.dedupe.scalarSlice(u8, old.name[0..].*),
+            .name = util.dedupe.scalarValue(old.name[0..].*),
             .type = T,
             .is_comptime = true,
             .default_value = @ptrCast(util.dedupe.scalarValue(old_value)),

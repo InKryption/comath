@@ -37,7 +37,7 @@ pub const dedupe = struct {
         comptime T: type,
         comptime array: anytype,
     ) *const [array.len]T {
-        return &array;
+        return scalarValue(@as([array.len]T, array));
     }
 
     pub inline fn sliceSlice(
@@ -69,7 +69,7 @@ pub const dedupe = struct {
             const info = @typeInfo(E).Enum;
             comptime var fields: [info.fields.len]std.builtin.Type.EnumField = info.fields[0..].*;
             for (&fields, 0..) |*field, i| field.* = .{
-                .name = util.dedupe.scalarSlice(u8, field.name[0..].*),
+                .name = util.dedupe.scalarValue(field.name[0..].*),
                 .value = i,
             };
             if (fields.len == 0) return EnumImpl(fields.len, fields);
