@@ -382,7 +382,7 @@ fn EvalExprTupleImpl(
         }
     }
     return @Type(.{ .Struct = .{
-        .layout = .Auto,
+        .layout = .auto,
         .decls = &.{},
         .is_tuple = true,
         .fields = &fields,

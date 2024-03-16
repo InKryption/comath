@@ -287,7 +287,7 @@ fn DedupedMethodNames(comptime method_names: anytype) type {
 }
 fn DedupedMethodNamesImpl(comptime fields: []const std.builtin.Type.StructField) type {
     return @Type(.{ .Struct = .{
-        .layout = .Auto,
+        .layout = .auto,
         .backing_integer = null,
         .is_tuple = false,
         .decls = &.{},
