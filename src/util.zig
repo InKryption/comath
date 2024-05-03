@@ -67,20 +67,26 @@ pub const dedupe = struct {
     pub const Enum = struct {
         fn Enum(comptime E: type) type {
             const info = @typeInfo(E).Enum;
-            comptime var fields: [info.fields.len]std.builtin.Type.EnumField = info.fields[0..].*;
+            var fields: [info.fields.len]std.builtin.Type.EnumField = info.fields[0..].*;
             for (&fields, 0..) |*field, i| field.* = .{
                 .name = util.dedupe.scalarValue(field.name[0..].*),
                 .value = i,
             };
             if (fields.len == 0) return EnumImpl(fields.len, fields);
-            std.sort.insertionContext(0, fields.len, struct {
-                pub fn swap(a: usize, b: usize) void {
-                    std.mem.swap([]const u8, &fields[a].name, &fields[b].name);
+            const SortCtx = struct {
+                fields: *@TypeOf(fields),
+
+                pub fn swap(ctx: @This(), a: usize, b: usize) void {
+                    const a_old = ctx.fields[a].name;
+                    ctx.fields[a].name = ctx.fields[b].name;
+                    ctx.fields[b].name = a_old;
                 }
-                pub fn lessThan(a: usize, b: usize) bool {
-                    return util.orderComptime(u8, fields[a].name, fields[b].name) == .lt;
+                pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+                    return util.orderComptime(u8, ctx.fields[a].name, ctx.fields[b].name) == .lt;
                 }
-            });
+            };
+            std.sort.insertionContext(0, fields.len, SortCtx{ .fields = &fields });
+
             return EnumImpl(fields.len, fields);
         }
         fn EnumImpl(

@@ -9,12 +9,16 @@ pub fn build(b: *Build) void {
     const unit_test_step = b.step("unit-test", "Run unit tests");
     test_step.dependOn(unit_test_step);
 
-    const comath_mod = b.addModule("comath", .{ .root_source_file = Build.LazyPath.relative("src/main.zig") });
-    const util_mod = b.createModule(.{ .root_source_file = Build.LazyPath.relative("src/util.zig") });
+    const comath_mod = b.addModule("comath", .{
+        .root_source_file = b.path("src/main.zig"),
+    });
+    const util_mod = b.createModule(.{
+        .root_source_file = b.path("src/util.zig"),
+    });
     comath_mod.addImport("util", util_mod);
 
     const unit_tests = b.addTest(.{
-        .root_source_file = Build.LazyPath.relative("src/main.zig"),
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });

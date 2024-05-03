@@ -88,4 +88,4 @@ test {
 ```
 
 ### Notable Implementations
-To see an example of the terse notation enabled by comath, see [zilliam](https://github.com/ymndoseijin/zilliam), 
+To see an example of the terse notation enabled by comath, see [zilliam](https://github.com/ymndoseijin/zilliam).
