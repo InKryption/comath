@@ -53,43 +53,36 @@ pub const dedupe = struct {
         }
         unreachable;
     }
-    pub const Enum = struct {
-        fn Enum(comptime E: type) type {
-            const info = @typeInfo(E).Enum;
-            var fields: [info.fields.len]std.builtin.Type.EnumField = info.fields[0..].*;
-            for (&fields, 0..) |*field, i| field.* = .{
-                .name = util.dedupe.scalarValue(field.name[0..].*),
-                .value = i,
-            };
-            if (fields.len == 0) return EnumImpl(fields.len, fields);
-            const SortCtx = struct {
-                fields: *@TypeOf(fields),
+    pub fn Enum(comptime E: type) type {
+        const EnumField = std.builtin.Type.EnumField;
+        const info = @typeInfo(E).Enum;
+        var fields: [info.fields.len] EnumField= info.fields[0..].*;
+        for (&fields, 0..) |*field, i| field.* = .{
+            .name = util.dedupe.scalarValue(field.name[0..].*),
+            .value = i,
+        };
+        if (fields.len == 0) return EnumImpl(fields.len, fields);
 
-                pub fn swap(ctx: @This(), a: usize, b: usize) void {
-                    const a_old = ctx.fields[a].name;
-                    ctx.fields[a].name = ctx.fields[b].name;
-                    ctx.fields[b].name = a_old;
-                }
-                pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
-                    return util.orderComptime(u8, ctx.fields[a].name, ctx.fields[b].name) == .lt;
-                }
-            };
-            std.sort.insertionContext(0, fields.len, SortCtx{ .fields = &fields });
+        std.sort.block(std.builtin.Type.EnumField, &fields, {}, struct {
+            fn lessThan(_: void, lhs: EnumField, rhs: EnumField) bool {
+                return util.orderComptime(u8, lhs.name, rhs.name) == .lt;
+            }
+        }.lessThan);
 
-            return EnumImpl(fields.len, fields);
-        }
-        fn EnumImpl(
-            comptime field_count: comptime_int,
-            comptime fields: [field_count]std.builtin.Type.EnumField,
-        ) type {
-            return @Type(.{ .Enum = .{
-                .tag_type = std.math.IntFittingRange(0, fields.len -| 1),
-                .is_exhaustive = true,
-                .decls = &.{},
-                .fields = &fields,
-            } });
-        }
-    }.Enum;
+        return EnumImpl(fields.len, fields);
+    }
+
+    fn EnumImpl(
+        comptime field_count: comptime_int,
+        comptime fields: [field_count]std.builtin.Type.EnumField,
+    ) type {
+        return @Type(.{ .Enum = .{
+            .tag_type = std.math.IntFittingRange(0, fields.len -| 1),
+            .is_exhaustive = true,
+            .decls = &.{},
+            .fields = &fields,
+        } });
+    }
 };
 
 pub inline fn eqlComptime(comptime T: type, comptime a: []const T, comptime b: []const T) bool {
