@@ -520,21 +520,21 @@ test eval {
     };
     const basic_ctx = BasicCtx{};
 
-    try util.testing.expectEqual(3, eval("x[y]", basic_ctx, .{
+    try std.testing.expectEqual(3, eval("x[y]", basic_ctx, .{
         .x = [3]u16{ 0, 3, 7 },
         .y = 1,
     }));
-    try util.testing.expectEqual(.{ 1, 2, 3 }, eval("x + y", basic_ctx, .{
+    try std.testing.expectEqual(.{ 1, 2, 3 }, eval("x + y", basic_ctx, .{
         .x = std.simd.iota(u8, 3),
         .y = @as(@Vector(3, u8), @splat(1)),
     }));
-    try util.testing.expectEqual(-4, eval("-4", basic_ctx, .{}));
-    try util.testing.expectEqual(7, eval("a + 3", basic_ctx, .{ .a = 4 }));
-    try util.testing.expectEqual(2, eval("a / 2", basic_ctx, .{ .a = 4 }));
-    try util.testing.expectEqual(12, eval("(y + 2) * x", basic_ctx, .{ .y = 2, .x = 3 }));
-    try util.testing.expectEqual(8, eval("y + 2 * x", basic_ctx, .{ .y = 2, .x = 3 }));
-    try util.testing.expectEqual(3, eval("a.b", basic_ctx, .{ .a = .{ .b = 3 } }));
-    try util.testing.expectEqual(6, eval("a / b / c", basic_ctx, .{ .a = 24, .b = 2, .c = 2 }));
+    try std.testing.expectEqual(-4, eval("-4", basic_ctx, .{}));
+    try std.testing.expectEqual(7, eval("a + 3", basic_ctx, .{ .a = 4 }));
+    try std.testing.expectEqual(2, eval("a / 2", basic_ctx, .{ .a = 4 }));
+    try std.testing.expectEqual(12, eval("(y + 2) * x", basic_ctx, .{ .y = 2, .x = 3 }));
+    try std.testing.expectEqual(8, eval("y + 2 * x", basic_ctx, .{ .y = 2, .x = 3 }));
+    try std.testing.expectEqual(3, eval("a.b", basic_ctx, .{ .a = .{ .b = 3 } }));
+    try std.testing.expectEqual(6, eval("a / b / c", basic_ctx, .{ .a = 24, .b = 2, .c = 2 }));
 
     const test_fns = struct {
         // zig fmt: off
@@ -543,15 +543,15 @@ test eval {
         inline fn sub(a: i32, b: i32) u32 { return a - b; }
         // zig fmt: on
     };
-    try util.testing.expectEqual(15, eval("get15()", basic_ctx, .{ .get15 = test_fns.get15 }));
-    try util.testing.expectEqual(16, eval("addOne(15)", basic_ctx, .{ .addOne = test_fns.addOne }));
-    try util.testing.expectEqual(17, eval("sub(19, 2)", basic_ctx, .{ .sub = test_fns.sub }));
+    try std.testing.expectEqual(15, eval("get15()", basic_ctx, .{ .get15 = test_fns.get15 }));
+    try std.testing.expectEqual(16, eval("addOne(15)", basic_ctx, .{ .addOne = test_fns.addOne }));
+    try std.testing.expectEqual(17, eval("sub(19, 2)", basic_ctx, .{ .sub = test_fns.sub }));
 
-    try util.testing.expectEqual(30, eval("2 * get15()", basic_ctx, .{ .get15 = test_fns.get15 }));
-    try util.testing.expectEqual(-45, eval("(3 * -get15())", basic_ctx, .{ .get15 = test_fns.get15 }));
+    try std.testing.expectEqual(30, eval("2 * get15()", basic_ctx, .{ .get15 = test_fns.get15 }));
+    try std.testing.expectEqual(-45, eval("(3 * -get15())", basic_ctx, .{ .get15 = test_fns.get15 }));
 
-    try util.testing.expectEqual([_]u8{ 'a', 'b', 'c' }, eval("a[0, 2, 4]", basic_ctx, .{ .a = "a b c" }));
-    try util.testing.expectEqual(31, eval("a.b()", basic_ctx, .{ .a = struct {
+    try std.testing.expectEqual([_]u8{ 'a', 'b', 'c' }, eval("a[0, 2, 4]", basic_ctx, .{ .a = "a b c" }));
+    try std.testing.expectEqual(31, eval("a.b()", basic_ctx, .{ .a = struct {
         fn b(_: @This()) u32 {
             return 31;
         }
@@ -586,5 +586,5 @@ test eval {
             return std.math.pow(@TypeOf(lhs, rhs), lhs, rhs);
         }
     };
-    try util.testing.expectEqual(64, eval("a ^ 3", PowCtx{}, .{ .a = @as(u64, 4) }));
+    try std.testing.expectEqual(64, eval("a ^ 3", PowCtx{}, .{ .a = @as(u64, 4) }));
 }

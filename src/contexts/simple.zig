@@ -242,12 +242,12 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
 }
 
 test simpleCtx {
-    try util.testing.expectEqual(5, comath.eval("a + b", simpleCtx({}), .{ .a = 2, .b = 3 }));
-    try util.testing.expectEqual(1, comath.eval("a +% b", simpleCtx({}), .{ .a = @as(u8, std.math.maxInt(u8)), .b = 2 }));
-    try util.testing.expectEqual(59049, comath.eval("3^(2 * a + -b)", simpleCtx({}), .{ .a = 7, .b = 4 }));
+    try std.testing.expectEqual(5, comath.eval("a + b", simpleCtx({}), .{ .a = 2, .b = 3 }));
+    try std.testing.expectEqual(1, comath.eval("a +% b", simpleCtx({}), .{ .a = @as(u8, std.math.maxInt(u8)), .b = 2 }));
+    try std.testing.expectEqual(59049, comath.eval("3^(2 * a + -b)", simpleCtx({}), .{ .a = 7, .b = 4 }));
 
     // complex precedence interactions
-    try util.testing.expectEqual(6 - 3 + 4 + 2, comath.eval("6*1-3*1+4*1+2", simpleCtx({}), .{}));
+    try std.testing.expectEqual(6 - 3 + 4 + 2, comath.eval("6*1-3*1+4*1+2", simpleCtx({}), .{}));
 
     const op_override_ctx = simpleCtx(struct {
         const OverrideUnOp = enum { @"++" };
@@ -289,5 +289,5 @@ test simpleCtx {
             };
         }
     }{});
-    try util.testing.expectEqual(2, comath.eval("(++2 ^ 5) $ 36", op_override_ctx, .{}));
+    try std.testing.expectEqual(2, comath.eval("(++2 ^ 5) $ 36", op_override_ctx, .{}));
 }

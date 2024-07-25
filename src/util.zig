@@ -17,17 +17,6 @@ pub fn NamespaceOf(comptime T: type) ?type {
     };
 }
 
-pub const testing = struct {
-    pub inline fn expectEqual(a: anytype, b: anytype) !void {
-        const T = @TypeOf(a, b);
-        return std.testing.expectEqual(@as(T, a), @as(T, b));
-    }
-    pub inline fn expectEqualDeep(a: anytype, b: anytype) !void {
-        const T = @TypeOf(a, b);
-        return std.testing.expectEqualDeep(@as(T, a), @as(T, b));
-    }
-};
-
 pub const dedupe = struct {
     pub inline fn scalarValue(comptime value: anytype) *const @TypeOf(value) {
         return &value;

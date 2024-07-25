@@ -327,16 +327,16 @@ test fnMethodCtx {
         .@"*" = "mul",
         .evalFuncCall = "mul",
     });
-    try util.testing.expectEqual(CustomNum.from(2), comath.eval("a + -b - c", fm_ctx, .{
+    try std.testing.expectEqual(CustomNum.from(2), comath.eval("a + -b - c", fm_ctx, .{
         .a = @as(CustomNum, @enumFromInt(22)),
         .b = @as(CustomNum, @enumFromInt(9)),
         .c = @as(CustomNum, @enumFromInt(11)),
     }));
-    try util.testing.expectEqual(CustomNum.from(77), comath.eval("a(b) * 1", fm_ctx, .{
+    try std.testing.expectEqual(CustomNum.from(77), comath.eval("a(b) * 1", fm_ctx, .{
         .a = @as(CustomNum, @enumFromInt(11)),
         .b = @as(CustomNum, @enumFromInt(7)),
     }));
-    try util.testing.expectEqual(CustomNum.from(62), comath.eval("num(31)(2)", fm_ctx, .{
+    try std.testing.expectEqual(CustomNum.from(62), comath.eval("num(31)(2)", fm_ctx, .{
         .num = CustomNum.from,
     }));
 }
