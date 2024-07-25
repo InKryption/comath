@@ -18,7 +18,7 @@ pub fn parseExpr(
 ) ExprNode {
     comptime {
         const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);
-        const res = parseExprImpl(
+        _, const result, _ = parseExprImpl(
             deduped_expr,
             .none,
             .{},
@@ -26,23 +26,22 @@ pub fn parseExpr(
             maybeMatchBinOp,
             maybeOrderBinOp,
         );
-        return res.result;
+        return result;
     }
 }
 
-const NestType = enum(comptime_int) { none, paren, bracket };
-const ParseExprImplInnerUpdate = struct {
-    terminator: Terminator,
-    tokenizer: Tokenizer,
-    result: ExprNode,
-
-    const Terminator = enum {
-        eof,
-        comma,
-        paren,
-        bracket,
-    };
+const NestType = enum(comptime_int) {
+    none,
+    paren,
+    bracket,
 };
+const ExprTerminator = enum {
+    eof,
+    comma,
+    paren,
+    bracket,
+};
+/// Returns the updated tokenizer, the parsed expression, and the expression terminator.
 fn parseExprImpl(
     comptime expr: []const u8,
     comptime nest_type: NestType,
@@ -50,11 +49,11 @@ fn parseExprImpl(
     comptime maybeMatchUnOpEnum: ?MatchOpFn,
     comptime maybeMatchBinOp: ?MatchOpFn,
     comptime maybeOrderBinOp: ?OrderBinOpFn,
-) ParseExprImplInnerUpdate {
+) struct { Tokenizer, ExprNode, ExprTerminator } {
     comptime {
-        var result: ExprNode = .null;
         var tokenizer = tokenizer_init;
-        var terminator: ParseExprImplInnerUpdate.Terminator = .eof;
+        var result: ExprNode = .null;
+        var terminator: ExprTerminator = .eof;
 
         @setEvalBranchQuota(expr.len + expr.len / 2);
         var can_be_unary = true;
@@ -139,12 +138,15 @@ fn parseExprImpl(
                 can_be_unary = false;
                 var args: []const ExprNode = &.{};
                 while (true) {
-                    const update = parseExprImpl(expr, inner_nest_type, tokenizer, maybeMatchUnOpEnum, maybeMatchBinOp, maybeOrderBinOp);
-                    tokenizer = update.tokenizer;
-                    if (update.result != .null) {
-                        args = args ++ &[_]ExprNode{update.result};
+                    tokenizer, //
+                    const update_result, //
+                    const update_terminator //
+                    = parseExprImpl(expr, inner_nest_type, tokenizer, maybeMatchUnOpEnum, maybeMatchBinOp, maybeOrderBinOp);
+
+                    if (update_result != .null) {
+                        args = args ++ &[_]ExprNode{update_result};
                     }
-                    switch (update.terminator) {
+                    switch (update_terminator) {
                         .comma => {},
                         .eof => {
                             result = .{ .err = "Missing closing " ++ switch (inner_nest_type) {
@@ -155,7 +157,7 @@ fn parseExprImpl(
                             break;
                         },
                         .paren, .bracket => {
-                            if (inner_nest_type != update.terminator) {
+                            if (inner_nest_type != update_terminator) {
                                 result = .{ .err = "Unexpected closing " ++ switch (inner_nest_type) {
                                     .paren => "parentheses where a closing bracket was expected",
                                     .bracket => "bracket where a closing parentheses was expected",
@@ -187,9 +189,9 @@ fn parseExprImpl(
             },
         };
         return .{
-            .terminator = terminator,
-            .tokenizer = tokenizer,
-            .result = result,
+            tokenizer,
+            result,
+            terminator,
         };
     }
 }
