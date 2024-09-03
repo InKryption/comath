@@ -18,10 +18,11 @@ pub fn parseExpr(
 ) ExprNode {
     comptime {
         const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);
-        _, const result, _ = parseExprImpl(
+        var tokenizer: Tokenizer = .{};
+        const result, _ = parseExprImpl(
+            &tokenizer,
             deduped_expr,
             .none,
-            .{},
             maybeMatchUnOp,
             maybeMatchBinOp,
             maybeOrderBinOp,
@@ -43,15 +44,14 @@ const ExprTerminator = enum {
 };
 /// Returns the updated tokenizer, the parsed expression, and the expression terminator.
 fn parseExprImpl(
+    comptime tokenizer: *Tokenizer,
     comptime expr: []const u8,
     comptime nest_type: NestType,
-    comptime tokenizer_init: Tokenizer,
     comptime maybeMatchUnOpEnum: ?MatchOpFn,
     comptime maybeMatchBinOp: ?MatchOpFn,
     comptime maybeOrderBinOp: ?OrderBinOpFn,
-) struct { Tokenizer, ExprNode, ExprTerminator } {
+) struct { ExprNode, ExprTerminator } {
     comptime {
-        var tokenizer = tokenizer_init;
         var result: ExprNode = .null;
         var terminator: ExprTerminator = .eof;
 
@@ -138,10 +138,9 @@ fn parseExprImpl(
                 can_be_unary = false;
                 var args: []const ExprNode = &.{};
                 while (true) {
-                    tokenizer, //
                     const update_result, //
                     const update_terminator //
-                    = parseExprImpl(expr, inner_nest_type, tokenizer, maybeMatchUnOpEnum, maybeMatchBinOp, maybeOrderBinOp);
+                    = parseExprImpl(tokenizer, expr, inner_nest_type, maybeMatchUnOpEnum, maybeMatchBinOp, maybeOrderBinOp);
 
                     if (update_result != .null) {
                         args = args ++ &[_]ExprNode{update_result};
@@ -188,11 +187,7 @@ fn parseExprImpl(
                 break;
             },
         };
-        return .{
-            tokenizer,
-            result,
-            terminator,
-        };
+        return .{ result, terminator };
     }
 }
 
