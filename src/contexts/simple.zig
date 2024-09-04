@@ -108,7 +108,7 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
         pub inline fn evalIndexAccess(ctx: Self, lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
             const Rhs = @TypeOf(rhs);
-            if (!@typeInfo(Rhs).Struct.is_tuple) comptime unreachable;
+            if (!@typeInfo(Rhs).@"struct".is_tuple) comptime unreachable;
             if (@hasDecl(Ns, "EvalIndexAccess")) {
                 if (Ns.EvalIndexAccess(Lhs, Rhs) != noreturn) {
                     return ctx.sub_ctx.evalIndexAccess(lhs, rhs);
@@ -124,7 +124,7 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
                     return Ns.EvalFuncCall(Callee, Args);
                 }
             }
-            const Ret = @typeInfo(util.ImplicitDeref(Callee)).Fn.return_type orelse blk: {
+            const Ret = @typeInfo(util.ImplicitDeref(Callee)).@"fn".return_type orelse blk: {
                 const callee: Callee = undefined;
                 const args: Args = undefined;
                 break :blk @TypeOf(@call(.auto, callee, args));
@@ -173,11 +173,11 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
             }
 
             const lhs: Lhs = switch (@typeInfo(Lhs)) {
-                .Int, .ComptimeInt, .Float, .ComptimeFloat => 0,
+                .int, .comptime_int, .float, .comptime_float => 0,
                 else => return noreturn,
             };
             const rhs: Rhs = switch (@typeInfo(Rhs)) {
-                .Int, .ComptimeInt, .Float, .ComptimeFloat => 0,
+                .int, .comptime_int, .float, .comptime_float => 0,
                 else => return noreturn,
             };
             return switch (@field(BinOp, op)) {

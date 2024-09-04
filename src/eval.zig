@@ -119,7 +119,7 @@ pub inline fn eval(
     const Inputs = @TypeOf(inputs);
 
     const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);
-    comptime if (!allow_unused_inputs and @typeInfo(Inputs).Struct.fields.len != 0) {
+    comptime if (!allow_unused_inputs and @typeInfo(Inputs).@"struct".fields.len != 0) {
         const InputTag = util.dedupe.Enum(std.meta.FieldEnum(Inputs));
         const EvalIdent = if (@hasDecl(Ns, "EvalIdent")) Ns.EvalIdent else struct {
             fn DummyEvalIdent(comptime _: []const u8) type {
@@ -211,7 +211,7 @@ fn EvalImpl(
     comptime Inputs: type,
 ) type {
     const Ns = switch (@typeInfo(Ctx)) {
-        .Pointer => |pointer| pointer.child,
+        .pointer => |pointer| pointer.child,
         else => Ctx,
     };
     return switch (expr) {
@@ -268,7 +268,7 @@ inline fn evalImpl(
 ) !EvalImpl(expr, @TypeOf(ctx), @TypeOf(inputs)) {
     const Ctx = @TypeOf(ctx);
     const Ns = switch (@typeInfo(Ctx)) {
-        .Pointer => |pointer| pointer.child,
+        .pointer => |pointer| pointer.child,
         else => Ctx,
     };
 
@@ -381,7 +381,7 @@ fn EvalExprTupleImpl(
             field.default_value = &(evalImpl(arg, @as(Ctx, undefined), @as(Inputs, undefined)) catch |err| @compileError(@errorName(err)));
         }
     }
-    return @Type(.{ .Struct = .{
+    return @Type(.{ .@"struct" = .{
         .layout = .auto,
         .decls = &.{},
         .is_tuple = true,
@@ -397,7 +397,7 @@ fn evalExprTupleImpl(
     var args: Tuple = undefined;
     @setEvalBranchQuota(args.len * 2);
     inline for (list, 0..) |arg, i| {
-        if (@typeInfo(Tuple).Struct.fields[i].is_comptime) continue;
+        if (@typeInfo(Tuple).@"struct".fields[i].is_comptime) continue;
         args[i] = try evalImpl(arg, ctx, inputs);
     }
     return args;
@@ -445,14 +445,14 @@ test eval {
         }
 
         pub fn EvalIndexAccess(comptime Lhs: type, comptime Rhs: type) type {
-            return switch (@typeInfo(Rhs).Struct.fields.len) {
+            return switch (@typeInfo(Rhs).@"struct".fields.len) {
                 0 => Lhs,
                 1 => std.meta.Elem(Lhs),
                 else => |n| [n]std.meta.Elem(Lhs),
             };
         }
         pub fn evalIndexAccess(_: @This(), lhs: anytype, rhs: anytype) EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
-            return switch (@typeInfo(@TypeOf(rhs)).Struct.fields.len) {
+            return switch (@typeInfo(@TypeOf(rhs)).@"struct".fields.len) {
                 0 => lhs,
                 1 => lhs[rhs[0]],
                 else => @shuffle(
@@ -466,7 +466,7 @@ test eval {
 
         pub fn EvalFuncCall(comptime Callee: type, comptime Args: type) type {
             _ = Args;
-            return @typeInfo(util.ImplicitDeref(Callee)).Fn.return_type.?;
+            return @typeInfo(util.ImplicitDeref(Callee)).@"fn".return_type.?;
         }
         pub fn evalFuncCall(_: @This(), callee: anytype, args: anytype) EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
             return @call(.auto, callee, args);
@@ -478,14 +478,14 @@ test eval {
             if (!@hasDecl(SelfNs, method)) return noreturn;
             const MethodType = @TypeOf(@field(SelfNs, method));
 
-            if (@typeInfo(MethodType) != .Fn) return noreturn;
-            const params = @typeInfo(MethodType).Fn.params;
+            if (@typeInfo(MethodType) != .@"fn") return noreturn;
+            const params = @typeInfo(MethodType).@"fn".params;
 
             if (params.len == 0) return noreturn;
             const Expected = util.ImplicitDeref(params[0].type orelse *const SelfParam);
 
             if (SelfNs != Expected) return noreturn;
-            return @typeInfo(MethodType).Fn.return_type.?;
+            return @typeInfo(MethodType).@"fn".return_type.?;
         }
         pub fn evalMethodCall(ctx: @This(), self_param: anytype, comptime method: []const u8, args: anytype) EvalMethodCall(@TypeOf(self_param), method, @TypeOf(args)) {
             const func = @field(util.ImplicitDeref(@TypeOf(self_param)), method);

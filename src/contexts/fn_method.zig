@@ -74,7 +74,7 @@ pub fn FnMethodCtx(
         pub fn EvalProperty(comptime T: type, comptime field: []const u8) type {
             if (getOpMapping(T, "evalProperty", method_names, 2)) |name| {
                 const Method = util.ImplicitDeref(@TypeOf(@field(T, name)));
-                const method_info = @typeInfo(Method).Fn;
+                const method_info = @typeInfo(Method).@"fn";
                 if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
 
                 const val: (method_info.params[0].type orelse T) = undefined;
@@ -87,7 +87,7 @@ pub fn FnMethodCtx(
             const T = @TypeOf(val);
             if (getOpMapping(@TypeOf(val), "evalProperty", method_names, 2)) |name| {
                 const Method = util.ImplicitDeref(@TypeOf(@field(T, name)));
-                const method_info = @typeInfo(Method).Fn;
+                const method_info = @typeInfo(Method).@"fn";
 
                 const field_arg = if (method_info.params[1].type) |FieldArg| castStringTo(FieldArg, field) else field;
                 return @field(T, name)(val, field_arg);
@@ -98,7 +98,7 @@ pub fn FnMethodCtx(
         pub fn EvalIndexAccess(comptime Lhs: type, comptime Rhs: type) type {
             if (getOpMapping(Lhs, "evalIndexAccess", method_names, 2)) |name| {
                 const Method = util.ImplicitDeref(@TypeOf(@field(Rhs, name)));
-                const method_info = @typeInfo(Method).Fn;
+                const method_info = @typeInfo(Method).@"fn";
                 if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
 
                 const lhs: (method_info.params[0].type orelse Lhs) = undefined;
@@ -116,10 +116,10 @@ pub fn FnMethodCtx(
         }
 
         pub fn EvalFuncCall(comptime Callee: type, comptime Args: type) type {
-            const args_info = @typeInfo(Args).Struct;
+            const args_info = @typeInfo(Args).@"struct";
             if (getOpMapping(Callee, "evalFuncCall", method_names, 1 + args_info.fields.len)) |name| {
                 const Method = util.ImplicitDeref(@TypeOf(@field(Callee, name)));
-                const method_info = @typeInfo(Method).Fn;
+                const method_info = @typeInfo(Method).@"fn";
                 if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
 
                 const lhs: (method_info.params[0].type orelse Callee) = undefined;
@@ -131,7 +131,7 @@ pub fn FnMethodCtx(
         pub inline fn evalFuncCall(ctx: Self, callee: anytype, args: anytype) !EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
             const Callee = @TypeOf(callee);
             const Args = @TypeOf(args);
-            const args_info = @typeInfo(Args).Struct;
+            const args_info = @typeInfo(Args).@"struct";
             if (getOpMapping(Callee, "evalFuncCall", method_names, 1 + args_info.fields.len)) |name| {
                 return @call(.auto, @field(Callee, name), .{callee} ++ args);
             }
@@ -141,7 +141,7 @@ pub fn FnMethodCtx(
         pub fn EvalUnOp(comptime op: []const u8, comptime T: type) type {
             if (getOpMapping(T, op, method_names, 1)) |name| {
                 const Method = util.ImplicitDeref(@TypeOf(@field(T, name)));
-                const method_info = @typeInfo(Method).Fn;
+                const method_info = @typeInfo(Method).@"fn";
                 if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
 
                 const val: (method_info.params[0].type orelse T) = undefined;
@@ -160,7 +160,7 @@ pub fn FnMethodCtx(
         pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {
             if (comptime getOpMapping(Lhs, op, method_names, 2)) |name| {
                 const Method = util.ImplicitDeref(@TypeOf(@field(Lhs, name)));
-                const method_info = @typeInfo(Method).Fn;
+                const method_info = @typeInfo(Method).@"fn";
                 if (method_info.return_type) |Ret| return util.GetPayloadIfErrorUnion(Ret);
 
                 const lhs: (method_info.params[0].type orelse Lhs) = undefined;
@@ -181,9 +181,9 @@ pub fn FnMethodCtx(
 
 inline fn castStringTo(comptime T: type, comptime str: []const u8) T {
     comptime switch (@typeInfo(T)) {
-        .Enum => return @field(T, str),
-        .Array => return str[0..].*,
-        .Pointer => |pointer| ptr: {
+        .@"enum" => return @field(T, str),
+        .array => return str[0..].*,
+        .pointer => |pointer| ptr: {
             var sentinel: ?u8 = null;
             switch (pointer.size) {
                 .Slice, .Many => {
@@ -194,8 +194,8 @@ inline fn castStringTo(comptime T: type, comptime str: []const u8) T {
                     }
                 },
                 .One => switch (@typeInfo(pointer.child)) {
-                    .Enum => return &@field(pointer.child, str),
-                    .Array => |array| {
+                    .@"enum" => return &@field(pointer.child, str),
+                    .array => |array| {
                         if (array.child != u8) break :ptr;
                         if (array.sentinel) |maybe_ptr| blk: {
                             const ptr = maybe_ptr orelse break :blk;
@@ -227,7 +227,7 @@ inline fn getOpMapping(
 
         const T = util.ImplicitDeref(Operand);
         switch (@typeInfo(T)) {
-            .Struct, .Union, .Enum, .Opaque => {},
+            .@"struct", .@"union", .@"enum", .@"opaque" => {},
             else => return null,
         }
 
@@ -239,7 +239,7 @@ inline fn getOpMapping(
         const result = for (entry_list, 0..) |name, i| {
             if (!@hasDecl(T, name)) continue;
             const Fn = util.ImplicitDeref(@TypeOf(@field(T, name)));
-            if (@typeInfo(Fn).Fn.params.len != arity) continue;
+            if (@typeInfo(Fn).@"fn".params.len != arity) continue;
             idx = i + 1;
             break name;
         } else null;
@@ -247,7 +247,7 @@ inline fn getOpMapping(
         for (entry_list[idx..]) |next_name| {
             if (!@hasDecl(T, next_name)) continue;
             const NextFn = util.ImplicitDeref(@TypeOf(@field(T, next_name)));
-            if (@typeInfo(NextFn).Fn.params.len != arity) continue;
+            if (@typeInfo(NextFn).@"fn".params.len != arity) continue;
             @compileError("Ambiguous resolution between method '" ++ result.? ++ "' and '" ++ next_name ++ "'");
         }
 
@@ -256,16 +256,16 @@ inline fn getOpMapping(
 }
 
 fn DedupedMethodNames(comptime method_names: anytype) type {
-    const info = @typeInfo(@TypeOf(method_names)).Struct;
+    const info = @typeInfo(@TypeOf(method_names)).@"struct";
 
     @setEvalBranchQuota(1000 + info.fields.len * 10);
     var fields: [info.fields.len]std.builtin.Type.StructField = undefined;
     for (&fields, info.fields) |*new, old| {
         const T = switch (@typeInfo(old.type)) {
-            .Pointer => |pointer| switch (@typeInfo(pointer.child)) {
-                .Int, .ComptimeInt => []const u8,
-                .Array => |array| switch (@typeInfo(array.child)) {
-                    .Int, .ComptimeInt => []const u8,
+            .pointer => |pointer| switch (@typeInfo(pointer.child)) {
+                .int, .comptime_int => []const u8,
+                .array => |array| switch (@typeInfo(array.child)) {
+                    .int, .comptime_int => []const u8,
                     else => []const []const u8,
                 },
                 else => []const []const u8,
@@ -286,7 +286,7 @@ fn DedupedMethodNames(comptime method_names: anytype) type {
     return DedupedMethodNamesImpl(deduped_fields);
 }
 fn DedupedMethodNamesImpl(comptime fields: []const std.builtin.Type.StructField) type {
-    return @Type(.{ .Struct = .{
+    return @Type(.{ .@"struct" = .{
         .layout = .auto,
         .backing_integer = null,
         .is_tuple = false,

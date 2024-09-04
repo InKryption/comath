@@ -205,8 +205,8 @@ pub const ExprNode = union(enum(comptime_int)) {
     bin_op: *const BinOp,
 
     pub inline fn eql(comptime a: ExprNode, comptime b: ExprNode) bool {
-        const tag_a: @typeInfo(ExprNode).Union.tag_type.? = a;
-        const tag_b: @typeInfo(ExprNode).Union.tag_type.? = b;
+        const tag_a: @typeInfo(ExprNode).@"union".tag_type.? = a;
+        const tag_b: @typeInfo(ExprNode).@"union".tag_type.? = b;
         comptime if (tag_a != tag_b) return false;
         const val_a = @field(a, @tagName(tag_a));
         const val_b = @field(b, @tagName(tag_b));
