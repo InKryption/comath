@@ -17,65 +17,36 @@ pub fn NamespaceOf(comptime T: type) ?type {
     };
 }
 
+comptime {
+    _ = dedupe;
+}
 pub const dedupe = struct {
     pub inline fn scalarValue(comptime value: anytype) *const @TypeOf(value) {
-        return &value;
+        comptime return &value;
     }
 
     pub inline fn scalarSlice(
         comptime T: type,
         comptime array: anytype,
     ) *const [array.len]T {
-        return scalarValue(@as([array.len]T, array));
+        comptime return scalarValue(@as([array.len]T, array));
     }
 
-    pub inline fn sliceSlice(
-        comptime T: type,
-        comptime slices: []const []const T,
-    ) *const [slices.len][]const T {
-        comptime {
-            var deduped = slices[0..].*;
-            for (&deduped) |*slice| slice.* = scalarSlice(T, slice.*);
-            return scalarSlice([]const T, &deduped);
-        }
-    }
-
-    pub inline fn enumValue(value: anytype) Enum(@TypeOf(value)) {
-        const T = @TypeOf(value);
-        const Deduped = Enum(T);
-        if (@inComptime()) return @field(Deduped, @tagName(value));
-        if (@typeInfo(T).@"enum".is_exhaustive) return switch (value) {
-            inline else => |tag| comptime @field(Deduped, @tagName(tag)),
-        };
-        inline for (@typeInfo(T).@"enum".fields) |field| {
-            const tag = @field(T, field.name);
-            if (tag == value) return @field(Deduped, field.name);
-        }
-        unreachable;
-    }
     pub fn Enum(comptime E: type) type {
         const EnumField = std.builtin.Type.EnumField;
         const info = @typeInfo(E).@"enum";
         var fields: [info.fields.len]EnumField = info.fields[0..].*;
-        for (&fields, 0..) |*field, i| field.* = .{
-            .name = util.dedupe.scalarValue(field.name[0..].*),
-            .value = i,
-        };
-        if (fields.len == 0) return EnumImpl(fields.len, fields);
+        if (fields.len == 0) return enum {};
 
         std.sort.block(std.builtin.Type.EnumField, &fields, {}, struct {
             fn lessThan(_: void, lhs: EnumField, rhs: EnumField) bool {
                 return util.orderComptime(u8, lhs.name, rhs.name) == .lt;
             }
         }.lessThan);
-
-        return EnumImpl(fields.len, fields);
-    }
-
-    fn EnumImpl(
-        comptime field_count: comptime_int,
-        comptime fields: [field_count]std.builtin.Type.EnumField,
-    ) type {
+        for (&fields, 0..) |*field, i| field.* = .{
+            .name = util.dedupe.scalarValue(field.name[0..].*),
+            .value = i,
+        };
         return @Type(.{ .@"enum" = .{
             .tag_type = std.math.IntFittingRange(0, fields.len -| 1),
             .is_exhaustive = true,
@@ -83,16 +54,29 @@ pub const dedupe = struct {
             .fields = &fields,
         } });
     }
+
+    test Enum {
+        try comptime std.testing.expectEqual(
+            dedupe.Enum(enum(u3) { a = 1, b = 2, c = 3 }),
+            dedupe.Enum(enum(u4) { c = 4, a = 5, b = 6 }),
+        );
+        try comptime std.testing.expectEqual(
+            dedupe.Enum(enum(u1) {}),
+            dedupe.Enum(enum(u32) {}),
+        );
+    }
 };
 
 pub inline fn eqlComptime(comptime T: type, comptime a: []const T, comptime b: []const T) bool {
-    if (a.len != b.len) return false;
-    const len = a.len;
-    const V = @Vector(len, T);
-    comptime return @reduce(.And, @as(V, a[0..].*) == @as(V, b[0..].*));
+    comptime {
+        if (a.len != b.len) return false;
+        const len = a.len;
+        const V = @Vector(len, T);
+        return @reduce(.And, @as(V, a[0..].*) == @as(V, b[0..].*));
+    }
 }
 
-pub inline fn indexOfDiffComptime(comptime T: type, comptime a: []const T, comptime b: []const T) ?comptime_int {
+pub fn indexOfDiffComptime(comptime T: type, comptime a: []const T, comptime b: []const T) ?comptime_int {
     const shortest = @min(a.len, b.len);
     const V = @Vector(shortest, T);
     const neqls_vec = @as(V, a[0..shortest].*) != @as(V, b[0..shortest].*);
@@ -106,13 +90,15 @@ pub inline fn indexOfDiffComptime(comptime T: type, comptime a: []const T, compt
 }
 
 pub inline fn orderComptime(comptime T: type, comptime a: []const T, comptime b: []const T) std.math.Order {
-    const diff = comptime indexOfDiffComptime(T, a, b) orelse return .eq;
-    comptime if (a.len != b.len) switch (diff) {
-        a.len => return .lt,
-        b.len => return .gt,
-        else => {},
-    };
-    return if (a[diff] < b[diff]) .lt else .gt;
+    comptime {
+        const diff = indexOfDiffComptime(T, a, b) orelse return .eq;
+        if (a.len != b.len) switch (diff) {
+            a.len => return .lt,
+            b.len => return .gt,
+            else => {},
+        };
+        return if (a[diff] < b[diff]) .lt else .gt;
+    }
 }
 
 pub fn indexOfNonePosComptime(
