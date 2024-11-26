@@ -162,7 +162,7 @@ inline fn analyzeInputs(
     comptime {
         var unused_set = std.EnumSet(InputTag).initFull();
         var shadow_set = std.EnumSet(InputTag).initEmpty();
-        var tokenizer = Tokenizer{};
+        var tokenizer: Tokenizer = .init;
         @setEvalBranchQuota(expr.len * 100);
         while (true) switch (tokenizer.next(expr)) {
             .eof => break,
@@ -405,6 +405,8 @@ fn evalExprTupleImpl(
 
 test eval {
     const BasicCtx = struct {
+        pub const init: @This() = .{};
+
         const UnOp = enum { @"-" };
         pub inline fn matchUnOp(comptime str: []const u8) bool {
             return @hasField(UnOp, str);
@@ -518,7 +520,7 @@ test eval {
             };
         }
     };
-    const basic_ctx = BasicCtx{};
+    const basic_ctx: BasicCtx = .init;
 
     try std.testing.expectEqual(3, eval("x[y]", basic_ctx, .{
         .x = [3]u16{ 0, 3, 7 },
@@ -558,6 +560,8 @@ test eval {
     }{} }));
 
     const PowCtx = struct {
+        pub const init: @This() = .{};
+
         const BinOp = enum { @"^" };
         pub inline fn matchBinOp(comptime str: []const u8) bool {
             return @hasField(BinOp, str);
@@ -586,5 +590,5 @@ test eval {
             return std.math.pow(@TypeOf(lhs, rhs), lhs, rhs);
         }
     };
-    try std.testing.expectEqual(64, eval("a ^ 3", PowCtx{}, .{ .a = @as(u64, 4) }));
+    try std.testing.expectEqual(64, eval("a ^ 3", PowCtx.init, .{ .a = @as(u64, 4) }));
 }

@@ -2,42 +2,42 @@ const std = @import("std");
 const util = @import("util");
 
 const Tokenizer = @This();
-index: comptime_int = 0,
+index: comptime_int,
 
-/// The set of characters which are used to separate meaningful tokens.
-pub const whitespace_characters: []const u8 = &[_]u8{
-    ' ',
-    '\t',
-    '\n',
-    '\r',
-    std.ascii.control_code.vt,
-    std.ascii.control_code.ff,
+pub const init: Tokenizer = .{
+    .index = 0,
 };
 
+/// The set of characters which are used to separate meaningful tokens.
+pub const whitespace_characters = [_]u8{ ' ', '\t', '\n' };
+
 /// The set of characters which are valid for use as part of an operator.
-pub const operator_characters: []const u8 = &[_]u8{
+pub const operator_characters = [_]u8{
     '!', '#', '$', '%', '&', '*',
     '+', '-', '/', '<', '=', '>',
     '?', '@', '~', '^', '|', ':',
 };
 
 /// The set of characters which can be used to start and compose an identifier.
-pub const identifier_start_characters: []const u8 =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ" ++
-    "abcdefghijklmnopqrstuvwxyz" ++
-    "_" //
+pub const identifier_start_characters: [26 * 2 + 1]u8 =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ".* ++
+    "abcdefghijklmnopqrstuvwxyz".* ++
+    "_".* //
 ;
 
 /// The set of characters which can be used to compose an identifier, though only a subset
 /// can be used to start an identifier.
-pub const identifier_characters: []const u8 = identifier_start_characters ++ "0123456789";
+pub const identifier_characters: [identifier_start_characters.len + 10]u8 =
+    identifier_start_characters ++
+    "0123456789".* //
+;
 
 /// The set of characters which are valid after a period ('.').
-pub const field_access_characters: []const u8 = operator_characters ++ identifier_characters;
+pub const field_access_characters = operator_characters ++ identifier_characters;
 
 pub const Token = union(enum) {
     /// no more tokens left
-    eof: enum(comptime_int) {},
+    eof,
 
     ident: []const u8,
     /// '.' field
@@ -59,14 +59,14 @@ pub const Token = union(enum) {
     /// error while tokenizing
     err: Err,
 
-    pub const Err = union(enum(comptime_int)) {
+    pub const Err = union(enum) {
         empty_field_access,
         unexpected_byte: u8,
     };
 
     pub inline fn eql(comptime a: Token, comptime b: Token) bool {
         comptime if (std.meta.activeTag(a) != b) return false;
-        return switch (a) {
+        comptime return switch (a) {
             .eof,
             .comma,
             .paren_open,
@@ -156,7 +156,7 @@ fn peekImpl(
     const tokenizer = blk: {
         var tokenizer = tokenizer_init;
         switch ((buffer ++ &[_:0]u8{})[tokenizer.index]) {
-            ' ', '\t', '\n', '\r', std.ascii.control_code.vt, std.ascii.control_code.ff => {
+            ' ', '\t', '\n' => {
                 const whitespace_end = util.indexOfNonePosComptime(u8, buffer[0..].*, tokenizer.index + 1, whitespace_characters[0..].*) orelse buffer.len;
                 tokenizer.index = whitespace_end;
             },
@@ -180,9 +180,6 @@ fn peekImpl(
         ' ',
         '\t',
         '\n',
-        '\r',
-        std.ascii.control_code.vt,
-        std.ascii.control_code.ff,
         => unreachable,
 
         ',', '(', ')', '[', ']' => |char| return .{
@@ -202,7 +199,7 @@ fn peekImpl(
         '_',
         => {
             const start = tokenizer.index;
-            const end = util.indexOfNonePosComptime(u8, buffer[0..].*, start + 1, identifier_characters[0..].*) orelse buffer.len;
+            const end = util.indexOfNonePosComptime(u8, buffer[0..].*, start + 1, identifier_characters) orelse buffer.len;
             const ident = util.dedupe.scalarSlice(u8, buffer[start..end].*);
             return .{
                 .state = .{ .index = end },
@@ -211,10 +208,10 @@ fn peekImpl(
         },
         '.' => {
             const start = util.indexOfNonePosComptime(u8, buffer[0..].*, tokenizer.index + 1, whitespace_characters[0..].*) orelse buffer.len;
-            const end = util.indexOfNonePosComptime(u8, buffer[0..].*, @min(buffer.len, start + 1), field_access_characters[0..].*) orelse buffer.len;
+            const end = util.indexOfNonePosComptime(u8, buffer[0..].*, @min(buffer.len, start + 1), field_access_characters) orelse buffer.len;
             const ident = util.dedupe.scalarSlice(u8, buffer[start..end].*);
             if (ident.len == 0 or
-                !util.containsScalarComptime(u8, field_access_characters[0..].*, ident[0]) //
+                !util.containsScalarComptime(u8, field_access_characters, ident[0]) //
             ) return .{
                 .state = .{ .index = start },
                 .token = .{ .err = .empty_field_access },
@@ -258,7 +255,7 @@ fn testTokenizer(
     comptime buffer: []const u8,
     comptime expected: []const Token,
 ) !void {
-    comptime var tokenizer = Tokenizer{};
+    comptime var tokenizer: Tokenizer = .init;
     inline for (expected) |expected_tok| {
         const actual_tok = tokenizer.next(buffer);
         if (actual_tok.eql(expected_tok)) continue;

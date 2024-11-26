@@ -18,7 +18,7 @@ pub fn parseExpr(
 ) ExprNode {
     comptime {
         const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);
-        var tokenizer: Tokenizer = .{};
+        var tokenizer: Tokenizer = .init;
         const result, _ = parseExprImpl(
             &tokenizer,
             deduped_expr,
@@ -246,13 +246,13 @@ pub const ExprNode = union(enum(comptime_int)) {
         comptime op: []const u8,
     ) ExprNode {
         return switch (base) {
-            .null => ExprNode{ .un_op = &.{
+            .null => .{ .un_op = &.{
                 .op = op,
                 .val = .null,
             } },
             .err => base,
             .un_op => |un| un.concatOp(op),
-            .bin_op => |bin| ExprNode{ .bin_op = &.{
+            .bin_op => |bin| .{ .bin_op = &.{
                 .lhs = bin.lhs,
                 .op = bin.op,
                 .rhs = bin.rhs.concatUnOp(op),
@@ -353,6 +353,7 @@ pub const ExprNode = union(enum(comptime_int)) {
             },
         };
     }
+
     inline fn concatIdent(comptime base: ExprNode, comptime ident: []const u8) ExprNode {
         return switch (base) {
             .null => .{ .ident = ident },
@@ -393,6 +394,7 @@ pub const ExprNode = union(enum(comptime_int)) {
             .un_op => |un| un.insertExprAsInnerTarget(.{ .ident = ident }),
         };
     }
+
     inline fn concatNumber(comptime base: ExprNode, comptime src: []const u8) ExprNode {
         return switch (base) {
             .null => .{ .number = src },
@@ -433,6 +435,7 @@ pub const ExprNode = union(enum(comptime_int)) {
             },
         };
     }
+
     inline fn concatFunctionArgsOrJustGroup(
         comptime base: ExprNode,
         comptime delimiter: enum { paren, bracket },
@@ -472,6 +475,7 @@ pub const ExprNode = union(enum(comptime_int)) {
             } },
         };
     }
+
     inline fn concatFieldAccess(comptime base: ExprNode, comptime field: []const u8) ExprNode {
         return switch (base) {
             .null => .{ .err = "Unexpected token '." ++ field ++ "'" },
