@@ -2,9 +2,13 @@ const std = @import("std");
 const Build = std.Build;
 
 pub fn build(b: *Build) void {
-    const target = b.standardTargetOptions(.{});
+    // some options are for local development only;
+    // they're only enabled if this is the root `build.zig`.
+    const is_root = b.pkg_hash.len == 0;
+
     const optimize = b.standardOptimizeOption(.{});
-    const run_steps = !(b.option(bool, "no-run", "Don't run any of the executables implied by the specified steps.") orelse false);
+    const target = b.standardTargetOptions(.{});
+    const run_steps = if (is_root) !(b.option(bool, "no-run", "Don't run any of the executables implied by the specified steps.") orelse false) else false;
 
     const install_step = b.getInstallStep();
     const unit_test_step = b.step("unit-test", "Run unit tests.");
@@ -16,6 +20,8 @@ pub fn build(b: *Build) void {
 
     const comath_mod = b.addModule("comath", .{
         .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
     });
     const util_mod = b.createModule(.{
         .root_source_file = b.path("src/util.zig"),
@@ -24,11 +30,8 @@ pub fn build(b: *Build) void {
 
     const unit_test_exe = b.addTest(.{
         .name = "unit-test",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = comath_mod,
     });
-    unit_test_exe.root_module.addImport("util", util_mod);
 
     const unit_test_install = b.addInstallArtifact(unit_test_exe, .{});
     install_step.dependOn(&unit_test_install.step);
