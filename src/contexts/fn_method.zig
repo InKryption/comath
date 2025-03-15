@@ -272,12 +272,12 @@ fn DedupedMethodNames(comptime method_names: anytype) type {
             },
             else => @compileError("Unexpected type " ++ @typeName(old.type)),
         };
-        const old_value: T = @as(*align(1) const old.type, @ptrCast(old.default_value)).*;
+        const old_value: T = @as(*align(1) const old.type, @ptrCast(old.default_value_ptr)).*;
         new.* = .{
             .name = util.dedupe.scalarValue(old.name[0..].*),
             .type = T,
             .is_comptime = true,
-            .default_value = @ptrCast(util.dedupe.scalarValue(old_value)),
+            .default_value_ptr = @ptrCast(util.dedupe.scalarValue(old_value)),
             .alignment = 0,
         };
     }
