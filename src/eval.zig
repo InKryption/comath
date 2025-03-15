@@ -369,7 +369,7 @@ fn EvalExprTupleImpl(
         field.* = .{
             .name = std.fmt.comptimePrint("{d}", .{i}),
             .type = T,
-            .default_value = if (!comptime_only) null else blk: {
+            .default_value_ptr = if (!comptime_only) null else blk: {
                 const val: T = evalImpl(arg, @as(Ctx, undefined), @as(Inputs, undefined)) catch |err| @compileError(@errorName(err));
                 break :blk &val;
             },
@@ -378,7 +378,7 @@ fn EvalExprTupleImpl(
         };
         if (@sizeOf(T) == 0) {
             field.is_comptime = true;
-            field.default_value = &(evalImpl(arg, @as(Ctx, undefined), @as(Inputs, undefined)) catch |err| @compileError(@errorName(err)));
+            field.default_value_ptr = &(evalImpl(arg, @as(Ctx, undefined), @as(Inputs, undefined)) catch |err| @compileError(@errorName(err)));
         }
     }
     return @Type(.{ .@"struct" = .{
