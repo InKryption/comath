@@ -3,23 +3,10 @@
     .version = "0.0.1",
     .fingerprint = 0xaca3e79a9f76a6c0, // Changing this has security and trust implications.
     .minimum_zig_version = "0.14.0",
-    .dependencies = .{
-    },
-
-    // Specifies the set of files and directories that are included in this package.
-    // Only files and directories listed here are included in the `hash` that
-    // is computed for this package. Only files listed here will remain on disk
-    // when using the zig package manager. As a rule of thumb, one should list
-    // files required for compilation plus any license(s).
-    // Paths are relative to the build root. Use the empty string (`""`) to refer to
-    // the build root itself.
-    // A directory listed here means that all files within, recursively, are included.
+    .dependencies = .{},
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
-        // For example...
-        //"LICENSE",
-        //"README.md",
     },
 }
