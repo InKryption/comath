@@ -2,13 +2,13 @@ const comath = @import("../main.zig");
 const std = @import("std");
 const util = @import("util");
 
-pub inline fn fnMethodCtx(
+pub inline fn fnMethod(
     sub_ctx: anytype,
     /// must be a struct literal wherein each field name is an operator,
     /// with a string literal value corresponding to the method name, or a list of possible method names.
     /// ie `.{ .@"+" = "add", .@"-" = &.{ "sub", "neg" } }`
     comptime method_names: anytype,
-) FnMethodCtx(@TypeOf(sub_ctx), method_names) {
+) FnMethod(@TypeOf(sub_ctx), method_names) {
     const SubCtx = @TypeOf(sub_ctx);
     if (util.NamespaceOf(SubCtx) == null) @compileError(
         "Expected struct/union/enum, or pointer to struct/union/enum/opaque, got '" ++ @typeName(SubCtx) ++ "'" ++
@@ -16,14 +16,15 @@ pub inline fn fnMethodCtx(
     );
     return .{ .sub_ctx = sub_ctx };
 }
-pub fn FnMethodCtx(
+
+pub fn FnMethod(
     comptime SubCtx: type,
     comptime method_names: anytype,
 ) type {
     {
         const Deduped = DedupedMethodNames(method_names);
         if (@TypeOf(method_names) != Deduped) {
-            return FnMethodCtx(SubCtx, Deduped{});
+            return FnMethod(SubCtx, Deduped{});
         }
     }
     return struct {
@@ -295,7 +296,7 @@ fn DedupedMethodNamesImpl(comptime fields: []const std.builtin.Type.StructField)
     } });
 }
 
-test fnMethodCtx {
+test fnMethod {
     const CustomNum = enum(i32) {
         _,
 
@@ -321,7 +322,7 @@ test fnMethodCtx {
         }
     };
 
-    const fm_ctx = fnMethodCtx(comath.ctx.simple({}), .{
+    const fm_ctx = fnMethod(comath.ctx.simple({}), .{
         .@"+" = "add",
         .@"-" = &.{ "sub", "neg" },
         .@"*" = "mul",

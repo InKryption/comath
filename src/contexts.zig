@@ -3,12 +3,12 @@ const std = @import("std");
 const util = @import("util");
 
 const simple_ctx = @import("contexts/simple.zig");
-pub const Simple = simple_ctx.SimpleCtx;
-pub const simple = simple_ctx.simpleCtx;
+pub const Simple = simple_ctx.Simple;
+pub const simple = simple_ctx.simple;
 
 const fn_method_ctx = @import("contexts/fn_method.zig");
-pub const FnMethod = fn_method_ctx.FnMethodCtx;
-pub const fnMethod = fn_method_ctx.fnMethodCtx;
+pub const FnMethod = fn_method_ctx.FnMethod;
+pub const fnMethod = fn_method_ctx.fnMethod;
 
 comptime {
     _ = simple_ctx;

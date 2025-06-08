@@ -23,7 +23,7 @@ const relations = .{
     .@"^" = comath.relation(.right, 30),
 };
 
-pub inline fn simpleCtx(sub_ctx: anytype) SimpleCtx(@TypeOf(sub_ctx)) {
+pub inline fn simple(sub_ctx: anytype) Simple(@TypeOf(sub_ctx)) {
     const SubCtx = @TypeOf(sub_ctx);
     if (util.NamespaceOf(SubCtx) == null and SubCtx != void) @compileError(
         "Expected struct/union/enum, or pointer to struct/union/enum/opaque, got '" ++ @typeName(SubCtx) ++ "'" ++
@@ -31,7 +31,8 @@ pub inline fn simpleCtx(sub_ctx: anytype) SimpleCtx(@TypeOf(sub_ctx)) {
     );
     return .{ .sub_ctx = sub_ctx };
 }
-pub fn SimpleCtx(comptime SubCtx: type) type {
+
+pub fn Simple(comptime SubCtx: type) type {
     return struct {
         sub_ctx: SubCtx,
         const Self = @This();
@@ -241,15 +242,15 @@ pub fn SimpleCtx(comptime SubCtx: type) type {
     };
 }
 
-test simpleCtx {
-    try std.testing.expectEqual(5, comath.eval("a + b", simpleCtx({}), .{ .a = 2, .b = 3 }));
-    try std.testing.expectEqual(1, comath.eval("a +% b", simpleCtx({}), .{ .a = @as(u8, std.math.maxInt(u8)), .b = 2 }));
-    try std.testing.expectEqual(59049, comath.eval("3^(2 * a + -b)", simpleCtx({}), .{ .a = 7, .b = 4 }));
+test simple {
+    try std.testing.expectEqual(5, comath.eval("a + b", simple({}), .{ .a = 2, .b = 3 }));
+    try std.testing.expectEqual(1, comath.eval("a +% b", simple({}), .{ .a = @as(u8, std.math.maxInt(u8)), .b = 2 }));
+    try std.testing.expectEqual(59049, comath.eval("3^(2 * a + -b)", simple({}), .{ .a = 7, .b = 4 }));
 
     // complex precedence interactions
-    try std.testing.expectEqual(6 - 3 + 4 + 2, comath.eval("6*1-3*1+4*1+2", simpleCtx({}), .{}));
+    try std.testing.expectEqual(6 - 3 + 4 + 2, comath.eval("6*1-3*1+4*1+2", simple({}), .{}));
 
-    const op_override_ctx = simpleCtx(struct {
+    const op_override_ctx = simple(struct {
         const OverrideUnOp = enum { @"++" };
         pub inline fn matchUnOp(comptime str: []const u8) bool {
             return @hasField(OverrideUnOp, str);
