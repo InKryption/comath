@@ -38,8 +38,6 @@ pub fn Simple(comptime SubCtx: type) type {
         const Self = @This();
         const Ns = util.NamespaceOf(SubCtx) orelse struct {};
 
-        pub const allow_unused_inputs = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
-
         pub inline fn matchUnOp(comptime str: []const u8) bool {
             const sub_match = @hasDecl(Ns, "matchUnOp") and Ns.matchUnOp(str);
             return sub_match or @hasField(UnOp, str);

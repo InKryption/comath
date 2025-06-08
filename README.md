@@ -22,13 +22,6 @@ The semantics of all the operations are defined by the `ctx` parameter, which sh
 which can be described in pseudo-code as:
 ```zig
 {
-    /// If the context namespace does not have it declared, it will be assumed to be false.
-    /// If true, the `inputs` struct parameter of the `eval` function may contain
-    /// fields which are not used in the `expr`.
-    /// If false, a compile error will be issued should any of the fields in `inputs`
-    /// not be referenced in `expr`.
-    pub const allow_unused_inputs: bool = ...; // defaults to `false`
-
     /// Should return `true` for any string of symbols corresponding to a recognized unary operator.
     pub inline fn matchUnOp(comptime str: []const u8) bool {...}
 

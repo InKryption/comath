@@ -36,11 +36,6 @@ const util = @import("util");
 ///
 /// * `ctx`:
 ///     Should be a value of a type with a namespace containing:
-///     + `allow_unused_inputs: bool = false`
-///         Boolean constant which with a value of `true` disables checking for unused inputs,
-///         and with a value of `false` causes a compile error to be issued for unused inputs.
-///         This declaration can be omitted, and defaults to `false`.
-///
 ///     + `matchUnOp: fn (comptime str: []const u8) callconv(.Inline) bool`
 ///         Function receiving a string of symbols, which should return true for any string of
 ///         symbols matching a recognized unary operator.
@@ -108,14 +103,31 @@ pub inline fn eval(
     ctx: anytype,
     inputs: anytype,
 ) !Eval(expr, @TypeOf(ctx), @TypeOf(inputs)) {
+    return evalUnusedMode(.no_unused, expr, ctx, inputs);
+}
+
+/// Like `eval`, except this doesn't issue a compile error for unused inputs.
+pub inline fn evalWithUnused(
+    comptime expr: []const u8,
+    ctx: anytype,
+    inputs: anytype,
+) !Eval(expr, @TypeOf(ctx), @TypeOf(inputs)) {
+    return evalUnusedMode(.allow_unused, expr, ctx, inputs);
+}
+
+const UnusedMode = enum { no_unused, allow_unused };
+inline fn evalUnusedMode(
+    comptime unused_mode: UnusedMode,
+    comptime expr: []const u8,
+    ctx: anytype,
+    inputs: anytype,
+) !Eval(expr, @TypeOf(ctx), @TypeOf(inputs)) {
     const Ctx = @TypeOf(ctx);
     const Ns = util.NamespaceOf(Ctx) orelse @compileError(std.fmt.comptimePrint(
         "Expected struct/union/enum, or pointer to struct/union/enum/opaque, instead got `{s}`, which has no associated namespace",
         .{@typeName(Ctx)},
     ));
-    const allow_unused_inputs: bool =
-        @hasDecl(Ns, "allow_unused_inputs") and
-        Ns.allow_unused_inputs;
+    const allow_unused_inputs: bool = unused_mode == .allow_unused;
     const Inputs = @TypeOf(inputs);
 
     const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);

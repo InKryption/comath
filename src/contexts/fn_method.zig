@@ -32,8 +32,6 @@ pub fn FnMethod(
         const Self = @This();
         const Ns = util.NamespaceOf(SubCtx) orelse struct {};
 
-        pub const allow_unused_inputs = @hasDecl(Ns, "allow_unused_inputs") and Ns.allow_unused_inputs;
-
         pub inline fn matchUnOp(comptime str: []const u8) bool {
             return @hasDecl(Ns, "matchUnOp") and Ns.matchUnOp(str);
         }
