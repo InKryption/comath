@@ -10,9 +10,14 @@ const fn_method_ctx = @import("contexts/fn_method.zig");
 pub const FnMethod = fn_method_ctx.FnMethod;
 pub const fnMethod = fn_method_ctx.fnMethod;
 
+const namespace_ctx = @import("contexts/namespace.zig");
+pub const Namespace = namespace_ctx.Namespace;
+pub const namespace = namespace_ctx.namespace;
+
 comptime {
     _ = simple_ctx;
     _ = fn_method_ctx;
+    _ = namespace_ctx;
 }
 
 pub fn DefaultEvalNumberLiteral(comptime src: []const u8) type {
