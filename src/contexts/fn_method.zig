@@ -63,9 +63,9 @@ pub fn FnMethod(
             }
             return noreturn;
         }
-        pub fn evalIdent(comptime ident: []const u8) type {
+        pub fn evalIdent(ctx: Self, comptime ident: []const u8) !EvalIdent(ident) {
             if (@hasDecl(Ns, "EvalIdent")) {
-                return Ns.evalIdent(ident);
+                return ctx.sub_ctx.evalIdent(ident);
             }
             comptime unreachable;
         }
