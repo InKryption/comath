@@ -175,6 +175,7 @@ pub fn FnMethod(
             }
             return ctx.sub_ctx.evalBinOp(lhs, op, rhs);
         }
+
         pub fn EvalMethodCall(comptime SelfParam: type, comptime method: []const u8, comptime Args: type) type {
             const SelfNs = util.ImplicitDeref(SelfParam);
             _ = Args;
