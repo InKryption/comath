@@ -237,6 +237,27 @@ pub fn Simple(comptime SubCtx: type) type {
                 },
             };
         }
+
+        pub fn EvalMethodCall(comptime SelfParam: type, comptime method: []const u8, comptime Args: type) type {
+            const SelfNs = util.ImplicitDeref(SelfParam);
+            _ = Args;
+            if (!@hasDecl(SelfNs, method)) return noreturn;
+            const MethodType = @TypeOf(@field(SelfNs, method));
+
+            if (@typeInfo(MethodType) != .@"fn") return noreturn;
+            const params = @typeInfo(MethodType).@"fn".params;
+
+            if (params.len == 0) return noreturn;
+            const Expected = util.ImplicitDeref(params[0].type orelse *const SelfParam);
+
+            if (SelfNs != Expected) return noreturn;
+            return @typeInfo(MethodType).@"fn".return_type.?;
+        }
+        pub fn evalMethodCall(ctx: @This(), self_param: anytype, comptime method: []const u8, args: anytype) !EvalMethodCall(@TypeOf(self_param), method, @TypeOf(args)) {
+            const func = @field(util.ImplicitDeref(@TypeOf(self_param)), method);
+            return ctx.evalFuncCall(func, .{self_param} ++ args);
+        }
+
     };
 }
 
