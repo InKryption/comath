@@ -84,7 +84,7 @@ pub fn Simple(comptime SubCtx: type) type {
                     return Ns.EvalProperty(Lhs, field);
                 }
             }
-            return std.meta.FieldType(Lhs, field);
+            return @FieldType(Lhs, field);
         }
         pub inline fn evalProperty(ctx: Self, lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field) {
             const Lhs = @TypeOf(lhs);
@@ -257,7 +257,6 @@ pub fn Simple(comptime SubCtx: type) type {
             const func = @field(util.ImplicitDeref(@TypeOf(self_param)), method);
             return ctx.evalFuncCall(func, .{self_param} ++ args);
         }
-
     };
 }
 
@@ -310,4 +309,22 @@ test simple {
         }
     }{});
     try std.testing.expectEqual(2, comath.eval("(++2 ^ 5) $ 36", op_override_ctx, .{}));
+}
+
+test "field access" {
+    const Vec = struct {
+        x: f32,
+        y: f32,
+    };
+
+    const v: Vec = .{ .x = 1, .y = 2 };
+
+    try std.testing.expectEqual(
+        1,
+        comath.eval("v.x", simple({}), .{ .v = v }),
+    );
+    try std.testing.expectEqual(
+        2,
+        comath.eval("v.y", simple({}), .{ .v = v }),
+    );
 }
