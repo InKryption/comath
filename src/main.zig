@@ -1,7 +1,6 @@
 const std = @import("std");
-const util = @import("util");
 
-const comath = @This();
+pub const compiled = @import("compiled.zig");
 
 pub const Eval = @import("eval.zig").Eval;
 pub const eval = @import("eval.zig").eval;
@@ -10,6 +9,7 @@ pub const eval = @import("eval.zig").eval;
 pub const ctx = @import("contexts.zig");
 
 comptime {
+    _ = compiled;
     _ = @import("eval.zig");
     _ = ctx;
 }
@@ -46,7 +46,7 @@ pub const Relation = struct {
         right,
     };
 
-    pub inline fn order(comptime lhs: Relation, comptime rhs: Relation) comath.Order {
+    pub inline fn order(comptime lhs: Relation, comptime rhs: Relation) Order {
         comptime return switch (std.math.order(lhs.prec, rhs.prec)) {
             .lt => .lt,
             .gt => .gt,

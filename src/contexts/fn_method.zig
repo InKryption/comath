@@ -64,7 +64,7 @@ pub fn Context(
             return noreturn;
         }
         pub fn evalIdent(ctx: Self, comptime ident: []const u8) !EvalIdent(ident) {
-            if (@TypeOf(Ns.EvalIdent) != void) {
+            if (@TypeOf(Ns.evalIdent) != void) {
                 return ctx.sub_ctx.evalIdent(ident);
             }
             comptime unreachable;

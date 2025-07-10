@@ -1,6 +1,5 @@
-const comath = @import("../main.zig");
 const std = @import("std");
-const util = @import("util");
+const cm = @import("../main.zig");
 
 pub const Access = enum {
     as_type,
@@ -97,18 +96,18 @@ fn lerp2(u: f32, first: f32, second: f32) f32 {
 }
 
 test context {
-    const simple_ctx1 = comath.ctx.simple.context(context(struct {
+    const simple_ctx1 = cm.ctx.simple.context(context(struct {
         pub fn lerp(u: f32, first: f32, second: f32) f32 {
             return u * first + (1.0 - u) * second;
         }
     }));
-    try std.testing.expectEqual(0.75, comath.eval("lerp(0.5, 0.25, 1.25)", simple_ctx1, .{}));
+    try std.testing.expectEqual(0.75, cm.eval("lerp(0.5, 0.25, 1.25)", simple_ctx1, .{}));
 
-    const simple_ctx2 = comath.ctx.simple.context(context(.{ .lerp = lerp2 }));
-    try std.testing.expectEqual(0.75, comath.eval("lerp(0.5, 0.25, 1.25)", simple_ctx2, .{}));
+    const simple_ctx2 = cm.ctx.simple.context(context(.{ .lerp = lerp2 }));
+    try std.testing.expectEqual(0.75, cm.eval("lerp(0.5, 0.25, 1.25)", simple_ctx2, .{}));
 
     try std.testing.expectEqual(
-        comath.eval("lerp(0.5, 0.25, 1.25)", simple_ctx1, .{}),
-        comath.eval("lerp(0.5, 0.25, 1.25)", simple_ctx2, .{}),
+        cm.eval("lerp(0.5, 0.25, 1.25)", simple_ctx1, .{}),
+        cm.eval("lerp(0.5, 0.25, 1.25)", simple_ctx2, .{}),
     );
 }

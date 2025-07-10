@@ -58,93 +58,123 @@ pub fn Context(comptime SubCtx: type) type {
             return @field(relations, lhs).order(@field(relations, rhs));
         }
 
-        pub const EvalNumberLiteral = cm.ctx.DefaultEvalNumberLiteral;
-        pub const evalNumberLiteral = cm.ctx.defaultEvalNumberLiteral;
+        pub fn EvalNumberLiteral(comptime src: []const u8) type {
+            if (@TypeOf(Ns.EvalNumberLiteral) != void) blk: {
+                if (@TypeOf(Ns.evalNumberLiteral) == void) @compileError("Can't have a type & value method pair be mismatched");
+                const T = Ns.EvalNumberLiteral(src);
+                if (T == noreturn) break :blk;
+                return T;
+            }
+            return cm.ctx.DefaultEvalNumberLiteral(src);
+        }
+        pub inline fn evalNumberLiteral(comptime src: []const u8) EvalNumberLiteral(src) {
+            if (@TypeOf(Ns.evalNumberLiteral) != void) blk: {
+                const T = Ns.EvalNumberLiteral(src);
+                if (T == noreturn) break :blk;
+                return Ns.evalNumberLiteral(src);
+            }
+            return cm.ctx.defaultEvalNumberLiteral(src);
+        }
 
         pub fn EvalIdent(comptime ident: []const u8) type {
-            if (@TypeOf(Ns.EvalIdent) != void) {
-                if (Ns.EvalIdent(ident) != noreturn) {
-                    return Ns.EvalIdent(ident);
-                }
+            if (@TypeOf(Ns.EvalIdent) != void) blk: {
+                if (@TypeOf(Ns.evalIdent) == void) @compileError("Can't have a type & value method pair be mismatched");
+                const T = Ns.EvalIdent(ident);
+                if (T == noreturn) break :blk;
+                return T;
             }
             return noreturn;
         }
-        pub inline fn evalIdent(ctx: @This(), comptime ident: []const u8) !EvalIdent(ident) {
-            if (@TypeOf(Ns.EvalIdent) != void) {
-                if (Ns.EvalIdent(ident) != noreturn) {
-                    return ctx.sub_ctx.evalIdent(ident);
-                }
+        pub fn evalIdent(ctx: Self, comptime ident: []const u8) !EvalIdent(ident) {
+            if (@TypeOf(Ns.evalIdent) != void) blk: {
+                const T = Ns.EvalIdent(ident);
+                if (T == noreturn) break :blk;
+                return ctx.sub_ctx.evalIdent(ident);
             }
             comptime unreachable;
         }
 
         pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {
-            if (@TypeOf(Ns.EvalProperty) != void) {
-                if (Ns.EvalProperty(Lhs, field) != noreturn) {
-                    return Ns.EvalProperty(Lhs, field);
-                }
+            if (@TypeOf(Ns.EvalProperty) != void) blk: {
+                if (@TypeOf(Ns.evalProperty) == void) @compileError("Can't have a type & value method pair be mismatched");
+                const T = Ns.EvalProperty(Lhs, field);
+                if (T == noreturn) break :blk;
+                return T;
             }
             return @FieldType(Lhs, field);
         }
-        pub inline fn evalProperty(ctx: Self, lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field) {
+        pub fn evalProperty(ctx: Self, lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field) {
             const Lhs = @TypeOf(lhs);
-            if (@TypeOf(Ns.EvalProperty) != void) {
-                if (Ns.EvalProperty(Lhs, field) != noreturn) {
-                    return ctx.sub_ctx.evalProperty(lhs, field);
-                }
+            if (@TypeOf(Ns.evalProperty) != void) blk: {
+                const T = Ns.EvalProperty(Lhs, field);
+                if (T == noreturn) break :blk;
+                return ctx.sub_ctx.evalProperty(lhs, field);
             }
             return @field(lhs, field);
         }
 
         pub fn EvalIndexAccess(comptime Lhs: type, comptime Rhs: type) type {
-            if (@TypeOf(Ns.EvalIndexAccess) != void) {
-                if (Ns.EvalIndexAccess(Lhs, Rhs) != noreturn) {
-                    return Ns.EvalIndexAccess(Lhs, Rhs);
-                }
+            if (@TypeOf(Ns.EvalIndexAccess) != void) blk: {
+                if (@TypeOf(Ns.evalIndexAccess) == void) @compileError("Can't have a type & value method pair be mismatched");
+                const T = Ns.EvalIndexAccess(Lhs, Rhs);
+                if (T == noreturn) break :blk;
+                return T;
             }
-            return std.meta.Elem(Lhs);
+            return switch (@typeInfo(Rhs).@"struct".fields.len) {
+                0 => Lhs,
+                1 => std.meta.Elem(Lhs),
+                else => |n| [n]std.meta.Elem(Lhs),
+            };
         }
-        pub inline fn evalIndexAccess(ctx: Self, lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
+        pub fn evalIndexAccess(ctx: Self, lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
             const Rhs = @TypeOf(rhs);
-            if (!@typeInfo(Rhs).@"struct".is_tuple) comptime unreachable;
-            if (@TypeOf(Ns.EvalIndexAccess) != void) {
-                if (Ns.EvalIndexAccess(Lhs, Rhs) != noreturn) {
-                    return ctx.sub_ctx.evalIndexAccess(lhs, rhs);
-                }
+            if (@TypeOf(Ns.evalIndexAccess) != void) blk: {
+                const T = Ns.EvalIndexAccess(Lhs, Rhs);
+                if (T == noreturn) break :blk;
+                return ctx.sub_ctx.evalIndexAccess(lhs, rhs);
             }
-            if (rhs.len != 1) @compileError("Expected single `usize` to index value of type" ++ @typeName(Lhs));
-            return lhs[rhs[0]];
+            return switch (@typeInfo(@TypeOf(rhs)).@"struct".fields.len) {
+                0 => lhs,
+                1 => lhs[rhs[0]],
+                else => @shuffle(
+                    std.meta.Elem(@TypeOf(lhs)),
+                    lhs[0..].*,
+                    undefined,
+                    @as([rhs.len]comptime_int, rhs),
+                ),
+            };
         }
 
         pub fn EvalFuncCall(comptime Callee: type, comptime Args: type) type {
-            if (@TypeOf(Ns.EvalFuncCall) != void) {
-                if (Ns.EvalFuncCall(Callee, Args) != noreturn) {
-                    return Ns.EvalFuncCall(Callee, Args);
-                }
+            if (@TypeOf(Ns.EvalFuncCall) != void) blk: {
+                if (@TypeOf(Ns.evalFuncCall) == void) @compileError("Can't have a type & value method pair be mismatched");
+                const T = Ns.EvalFuncCall(Callee, Args);
+                if (T == noreturn) break :blk;
+                return T;
             }
-            const Ret = @typeInfo(util.ImplicitDeref(Callee)).@"fn".return_type orelse blk: {
-                const callee: Callee = undefined;
-                const args: Args = undefined;
-                break :blk @TypeOf(@call(.auto, callee, args));
-            };
-            return util.GetPayloadIfErrorUnion(Ret);
+            return @typeInfo(Callee).@"fn".return_type.?;
         }
-        pub inline fn evalFuncCall(ctx: Self, callee: anytype, args: anytype) !EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
+        pub fn evalFuncCall(ctx: Self, callee: anytype, args: anytype) EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
             const Callee = @TypeOf(callee);
             const Args = @TypeOf(args);
-
-            if (@TypeOf(Ns.EvalFuncCall) != void) {
-                if (Ns.EvalFuncCall(Callee, Args) != noreturn) {
-                    return ctx.sub_ctx.evalFuncCall(callee, args);
-                }
+            if (@TypeOf(Ns.evalFuncCall) != void) blk: {
+                const T = Ns.EvalFuncCall(Callee, Args);
+                if (T == noreturn) break :blk;
+                return ctx.sub_ctx.evalFuncCall(callee, args);
             }
             return @call(.auto, callee, args);
         }
 
         pub fn EvalMethodCall(comptime SelfParam: type, comptime method: []const u8, comptime Args: type) type {
+            if (@TypeOf(Ns.EvalMethodCall) != void) blk: {
+                if (@TypeOf(Ns.evalMethodCall) == void) @compileError("Can't have a type & value method pair be mismatched");
+                const T = Ns.EvalMethodCall(SelfParam, method, Args);
+                if (T == noreturn) break :blk;
+                return T;
+            }
+
             const SelfNs = util.ImplicitDeref(SelfParam);
-            _ = Args;
             if (!@hasDecl(SelfNs, method)) return noreturn;
             const MethodType = @TypeOf(@field(SelfNs, method));
 
@@ -157,7 +187,17 @@ pub fn Context(comptime SubCtx: type) type {
             if (SelfNs != Expected) return noreturn;
             return @typeInfo(MethodType).@"fn".return_type.?;
         }
-        pub fn evalMethodCall(ctx: @This(), self_param: anytype, comptime method: []const u8, args: anytype) !EvalMethodCall(@TypeOf(self_param), method, @TypeOf(args)) {
+        pub fn evalMethodCall(
+            ctx: Self,
+            self_param: anytype,
+            comptime method: []const u8,
+            args: anytype,
+        ) !EvalMethodCall(@TypeOf(self_param), method, @TypeOf(args)) {
+            if (@TypeOf(Ns.evalMethodCall) != void) blk: {
+                const T = Ns.EvalMethodCall(@TypeOf(self_param), method, @TypeOf(args));
+                if (T == noreturn) break :blk;
+                return ctx.sub_ctx.evalMethodCall(self_param, method, args);
+            }
             const func = @field(util.ImplicitDeref(@TypeOf(self_param)), method);
             return ctx.evalFuncCall(func, .{self_param} ++ args);
         }
@@ -279,9 +319,25 @@ test context {
             return @hasField(OverrideBinOp, str);
         }
 
-        pub const relations = .{
-            .@"$" = .{ .prec = 2, .assoc = .right },
-        };
+        pub const orderBinOp = {};
+
+        pub const EvalNumberLiteral = {};
+        pub const evalNumberLiteral = {};
+
+        pub const EvalIdent = {};
+        pub const evalIdent = {};
+
+        pub const EvalProperty = {};
+        pub const evalProperty = {};
+
+        pub const EvalIndexAccess = {};
+        pub const evalIndexAccess = {};
+
+        pub const EvalFuncCall = {};
+        pub const evalFuncCall = {};
+
+        pub const EvalMethodCall = {};
+        pub const evalMethodCall = {};
 
         pub fn EvalUnOp(comptime op: []const u8, comptime T: type) type {
             return switch (@field(OverrideUnOp, op)) {
@@ -293,6 +349,11 @@ test context {
                 .@"++" => val + 1,
             };
         }
+
+        const relations = .{
+            .@"$" = .{ .prec = 2, .assoc = .right },
+        };
+
         pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {
             return switch (@field(OverrideBinOp, op)) {
                 .@"^", .@"$" => @TypeOf(

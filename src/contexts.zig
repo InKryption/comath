@@ -1,6 +1,4 @@
 const std = @import("std");
-const cm = @import("main.zig");
-const util = @import("util");
 
 pub const Null = @import("contexts/Null.zig");
 pub const simple = @import("contexts/simple.zig");
@@ -22,6 +20,7 @@ pub fn DefaultEvalNumberLiteral(comptime src: []const u8) type {
     };
 }
 pub fn defaultEvalNumberLiteral(comptime src: []const u8) DefaultEvalNumberLiteral(src) {
+    @setEvalBranchQuota(src.len * 10_000);
     return switch (std.zig.parseNumberLiteral(src)) {
         .int => |val| val,
         .big_int => |base| blk: {
