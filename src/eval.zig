@@ -1,7 +1,9 @@
-const comath = @import("main.zig");
-const parse = @import("parse.zig");
 const std = @import("std");
+
+const cm = @import("main.zig");
+const parse = @import("parse.zig");
 const Tokenizer = @import("Tokenizer.zig");
+
 const util = @import("util");
 
 /// Evaluates `expr` as an expression, wherein the operations are defined
@@ -35,7 +37,8 @@ const util = @import("util");
 /// ```
 ///
 /// * `ctx`:
-///     Should be a value of a type with a namespace containing:
+///     Must be a value of a type with a namespace a list of methods that will be listed following this paragraph.
+///     Each declaration must be present as described, or must be set to void, i.e. `pub const <name> = {};`
 ///     + `matchUnOp: fn (comptime str: []const u8) callconv(.Inline) bool`
 ///         Function receiving a string of symbols, which should return true for any string of
 ///         symbols matching a recognized unary operator.
@@ -47,11 +50,13 @@ const util = @import("util");
 ///     + `orderBinOp: fn (comptime lhs: []const u8, comptime rhs: []const u8) callconv(.Inline) ?operator.Order`
 ///         Function receiving a pair of strings representing two chained binary operators,
 ///         wherein for both `matchBinOp(s) = true`, which should return the ordering relation
-///         between the two. For example, given an expression `a $ b @ c`:
+///         between the two.
+///         For example, given an expression `a $ b @ c`:
 ///             - With `orderBinOp("$", "@") = .lt`           => the expression will be interpreted as `a $ (b @ c)`.
 ///             - With `orderBinOp("$", "@") = .gt`           => the expression will be interpreted as `(a $ b) @ c`.
 ///             - With `orderBinOp("$", "@") = .incompatible` => the expression will be considered invalid, and issue an error about unchainable operators.
 ///             - With `orderBinOp("$", "@") = null`          => the expression will be considered invalid, and may issue an error about an undefined operator relationship.
+///         NOTE: returning null may be used as a hint to a "wrapper context" that it should use a fallback if possible.
 ///
 ///     + `EvalNumberLiteral: fn (comptime src: []const u8) type`
 ///     + `evalNumberLiteral: fn (comptime src: []const u8) EvalNumberLiteral(src)`
@@ -85,16 +90,14 @@ const util = @import("util");
 ///         If `EvalMethodCall(S, m, A) = noreturn`, it will be interpreted as `(self_param.method)(args...)`,
 ///         falling back to `evalFuncCall(evalProperty(self_param, method), args)`.
 ///
-///     + `EvalUnOp: fn (comptime op: UnOp, comptime T: type) type`
-///     + `evalUnOp: fn (ctx: @This(), comptime op: UnOp, value: anytype) !EvalUnOp(op, @TypeOf(value))`
+///     + `EvalUnOp: fn (comptime op: []const u8, comptime T: type) type`
+///     + `evalUnOp: fn (ctx: @This(), comptime op: []const u8, value: anytype) !EvalUnOp(op, @TypeOf(value))`
 ///         Returns the value that should result from an expression `op value`.
 ///
-///     + `EvalBinOp: fn (comptime Lhs: type, comptime op: BinOp, comptime Rhs: type) type`
-///     + `evalBinOp: fn (ctx: @This(), lhs: anytype, comptime op: BinOp, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs))`
+///     + `EvalBinOp: fn (comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type`
+///     + `evalBinOp: fn (ctx: @This(), lhs: anytype, comptime op: []const u8, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs))`
 ///         Returns the value that should result from an expression `lhs op rhs`.
-///
-/// Important to note that in order to work with number literals, the implementations of the
-/// functions listed above must account for `comath.Number`.
+///     NOTE: type methods may return `noreturn` as a hint to a "wrapper context" that it should use a fallback if possible.
 ///
 /// * `inputs`:
 /// a non-tuple struct literal whose field names correspond to identifiers in the `expr` source code
@@ -116,6 +119,11 @@ pub inline fn evalWithUnused(
 }
 
 const UnusedMode = enum { no_unused, allow_unused };
+
+fn EvalIdentAlwaysNoreturn(comptime _: []const u8) type {
+    return noreturn;
+}
+
 inline fn evalUnusedMode(
     comptime unused_mode: UnusedMode,
     comptime expr: []const u8,
@@ -123,29 +131,27 @@ inline fn evalUnusedMode(
     inputs: anytype,
 ) !Eval(expr, @TypeOf(ctx), @TypeOf(inputs)) {
     const Ctx = @TypeOf(ctx);
-    const Ns = util.NamespaceOf(Ctx) orelse @compileError(std.fmt.comptimePrint(
-        "Expected struct/union/enum, or pointer to struct/union/enum/opaque, instead got `{s}`, which has no associated namespace",
-        .{@typeName(Ctx)},
-    ));
-    const allow_unused_inputs: bool = unused_mode == .allow_unused;
+    const Ns = util.NamespaceOf(Ctx).?;
     const Inputs = @TypeOf(inputs);
 
-    const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);
-    comptime if (!allow_unused_inputs and @typeInfo(Inputs).@"struct".fields.len != 0) {
-        const InputTag = util.dedupe.Enum(std.meta.FieldEnum(Inputs));
-        const EvalIdent = if (@hasDecl(Ns, "EvalIdent")) Ns.EvalIdent else struct {
-            fn DummyEvalIdent(comptime _: []const u8) type {
-                return noreturn;
+    comptime switch (unused_mode) {
+        .allow_unused => {},
+        .no_unused => if (@typeInfo(Inputs).@"struct".fields.len != 0) {
+            const EvalIdent = switch (@TypeOf(Ns.EvalIdent)) {
+                void => EvalIdentAlwaysNoreturn,
+                else => Ns.EvalIdent,
+            };
+            if (analyzeInputs(expr, Inputs, EvalIdent)) |err| {
+                @compileError(@errorName(err));
             }
-        }.DummyEvalIdent;
-        analyzeInputs(deduped_expr, InputTag, EvalIdent) catch |err|
-            @compileError(@errorName(err));
+        },
     };
+
     const root = comptime parse.parseExpr(
         expr,
-        if (@hasDecl(Ns, "matchUnOp")) Ns.matchUnOp else null,
-        if (@hasDecl(Ns, "matchBinOp")) Ns.matchBinOp else null,
-        if (@hasDecl(Ns, "orderBinOp")) Ns.orderBinOp else null,
+        if (@TypeOf(Ns.matchUnOp) != void) Ns.matchUnOp else null,
+        if (@TypeOf(Ns.matchBinOp) != void) Ns.matchBinOp else null,
+        if (@TypeOf(Ns.orderBinOp) != void) Ns.orderBinOp else null,
     );
     return evalImpl(root, ctx, inputs);
 }
@@ -156,22 +162,49 @@ pub fn Eval(
     comptime Ctx: type,
     comptime Inputs: type,
 ) type {
-    const Ns = util.NamespaceOf(Ctx) orelse struct {};
+    const Ns = util.NamespaceOf(Ctx) orelse @compileError(std.fmt.comptimePrint(
+        "Expected struct/union/enum, or pointer to struct/union/enum/opaque, instead got `{s}`, which has no associated namespace",
+        .{@typeName(Ctx)},
+    ));
     const root = parse.parseExpr(
         expr,
-        if (@hasDecl(Ns, "matchUnOp")) Ns.matchUnOp else null,
-        if (@hasDecl(Ns, "matchBinOp")) Ns.matchBinOp else null,
-        if (@hasDecl(Ns, "orderBinOp")) Ns.orderBinOp else null,
+        if (@TypeOf(Ns.matchUnOp) != void) Ns.matchUnOp else null,
+        if (@TypeOf(Ns.matchBinOp) != void) Ns.matchBinOp else null,
+        if (@TypeOf(Ns.orderBinOp) != void) Ns.orderBinOp else null,
     );
     return EvalImpl(root, Ctx, Inputs);
 }
 
+/// Returns null if everything is fine, and an error message otherwise.
 inline fn analyzeInputs(
     comptime expr: []const u8,
-    comptime InputTag: type,
+    comptime Inputs: type,
     comptime EvalIdent: fn (comptime []const u8) type,
-) !void {
+) ?[]const u8 {
     comptime {
+        const InputTag = input_tag: {
+            const inputs_s_info = @typeInfo(Inputs).@"struct";
+
+            var e_fields: [inputs_s_info.fields.len]std.builtin.Type.EnumField = undefined;
+            @setEvalBranchQuota(inputs_s_info.fields.len * 2 + 1);
+            for (
+                &e_fields,
+                inputs_s_info.fields,
+                0..,
+            ) |*e_field, s_field, i| {
+                e_field.* = .{ .name = s_field.name, .value = i };
+            }
+
+            const InputTag = @Type(.{ .@"enum" = .{
+                .tag_type = u64,
+                .fields = &e_fields,
+                .decls = &.{},
+                .is_exhaustive = true,
+            } });
+
+            break :input_tag InputTag;
+        };
+
         var unused_set = std.EnumSet(InputTag).initFull();
         var shadow_set = std.EnumSet(InputTag).initEmpty();
         var tokenizer: Tokenizer = .init;
@@ -212,8 +245,8 @@ inline fn analyzeInputs(
             err_str = err_str ++ "\n";
         }
 
-        if (err_str.len != 0)
-            return @field(anyerror, err_str);
+        if (err_str.len == 0) return null;
+        return err_str;
     }
 }
 
@@ -239,7 +272,7 @@ fn EvalImpl(
         .group => |group| EvalImpl(group.*, Ctx, Inputs),
         .field_access => |fa| blk: {
             const Lhs = EvalImpl(fa.accessed, Ctx, Inputs);
-            break :blk Ns.EvalProperty(Lhs, util.dedupe.scalarSlice(u8, fa.accessor[0..].*));
+            break :blk Ns.EvalProperty(Lhs, util.dedupeScalarSlice(u8, fa.accessor[0..].*));
         },
         .index_access => |ia| blk: {
             const Lhs = EvalImpl(ia.accessed, Ctx, Inputs);
@@ -299,7 +332,7 @@ inline fn evalImpl(
         .field_access => |fa| blk: {
             const Lhs = EvalImpl(fa.accessed, Ns, Inputs);
             const lhs: Lhs = try evalImpl(fa.accessed, ctx, inputs);
-            break :blk ctx.evalProperty(lhs, util.dedupe.scalarSlice(u8, fa.accessor[0..].*));
+            break :blk ctx.evalProperty(lhs, util.dedupeScalarSlice(u8, fa.accessor[0..].*));
         },
         .index_access => |ia| blk: {
             const Lhs = EvalImpl(ia.accessed, Ns, Inputs);
@@ -430,17 +463,17 @@ test eval {
         }
 
         const relations = .{
-            .@"+" = comath.relation(.left, 0),
-            .@"-" = comath.relation(.left, 0),
-            .@"*" = comath.relation(.left, 1),
-            .@"/" = comath.relation(.left, 1),
+            .@"+" = cm.relation(.left, 0),
+            .@"-" = cm.relation(.left, 0),
+            .@"*" = cm.relation(.left, 1),
+            .@"/" = cm.relation(.left, 1),
         };
-        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?comath.Order {
+        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?cm.Order {
             return @field(relations, lhs).order(@field(relations, rhs));
         }
 
-        pub const EvalNumberLiteral = comath.ctx.DefaultEvalNumberLiteral;
-        pub const evalNumberLiteral = comath.ctx.defaultEvalNumberLiteral;
+        pub const EvalNumberLiteral = cm.ctx.DefaultEvalNumberLiteral;
+        pub const evalNumberLiteral = cm.ctx.defaultEvalNumberLiteral;
 
         pub fn EvalIdent(comptime ident: []const u8) type {
             _ = ident;
@@ -489,7 +522,7 @@ test eval {
         pub fn EvalMethodCall(comptime SelfParam: type, comptime method: []const u8, comptime Args: type) type {
             const SelfNs = util.ImplicitDeref(SelfParam);
             _ = Args;
-            if (!@hasDecl(SelfNs, method)) return noreturn;
+            if (@TypeOf(@field(SelfNs, method)) == void) return noreturn;
             const MethodType = @TypeOf(@field(SelfNs, method));
 
             if (@typeInfo(MethodType) != .@"fn") return noreturn;
@@ -574,11 +607,17 @@ test eval {
     const PowCtx = struct {
         pub const init: @This() = .{};
 
+        pub const matchUnOp = {};
+
         const BinOp = enum { @"^" };
+
         pub inline fn matchBinOp(comptime str: []const u8) bool {
             return @hasField(BinOp, str);
         }
-        pub const relations = .{
+
+        pub const orderBinOp = {};
+
+        const relations = .{
             .@"^" = .{ .prec = 0, .assoc = .right },
         };
 

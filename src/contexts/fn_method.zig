@@ -1,14 +1,14 @@
-const comath = @import("../main.zig");
 const std = @import("std");
+const cm = @import("../main.zig");
 const util = @import("util");
 
-pub inline fn fnMethod(
+pub inline fn context(
     sub_ctx: anytype,
     /// must be a struct literal wherein each field name is an operator,
     /// with a string literal value corresponding to the method name, or a list of possible method names.
     /// ie `.{ .@"+" = "add", .@"-" = &.{ "sub", "neg" } }`
     comptime method_names: anytype,
-) FnMethod(@TypeOf(sub_ctx), method_names) {
+) Context(@TypeOf(sub_ctx), method_names) {
     const SubCtx = @TypeOf(sub_ctx);
     if (util.NamespaceOf(SubCtx) == null) @compileError(
         "Expected struct/union/enum, or pointer to struct/union/enum/opaque, got '" ++ @typeName(SubCtx) ++ "'" ++
@@ -17,54 +17,54 @@ pub inline fn fnMethod(
     return .{ .sub_ctx = sub_ctx };
 }
 
-pub fn FnMethod(
+pub fn Context(
     comptime SubCtx: type,
     comptime method_names: anytype,
 ) type {
     {
         const Deduped = DedupedMethodNames(method_names);
         if (@TypeOf(method_names) != Deduped) {
-            return FnMethod(SubCtx, Deduped{});
+            return Context(SubCtx, Deduped{});
         }
     }
     return struct {
         sub_ctx: SubCtx,
         const Self = @This();
-        const Ns = util.NamespaceOf(SubCtx) orelse struct {};
+        const Ns = util.NamespaceOf(SubCtx) orelse cm.ctx.Null;
 
         pub inline fn matchUnOp(comptime str: []const u8) bool {
-            return @hasDecl(Ns, "matchUnOp") and Ns.matchUnOp(str);
+            return @TypeOf(Ns.matchUnOp) != void and Ns.matchUnOp(str);
         }
 
         pub inline fn matchBinOp(comptime str: []const u8) bool {
-            return @hasDecl(Ns, "matchBinOp") and Ns.matchBinOp(str);
+            return @TypeOf(Ns.matchBinOp) != void and Ns.matchBinOp(str);
         }
 
-        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?comath.Order {
+        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?cm.Order {
             return Ns.orderBinOp(lhs, rhs);
         }
 
         pub fn EvalNumberLiteral(comptime src: []const u8) type {
-            if (@hasDecl(Ns, "EvalNumberLiteral")) {
+            if (@TypeOf(Ns.EvalNumberLiteral) != void) {
                 return Ns.EvalNumberLiteral(src);
             }
-            return comath.ctx.DefaultEvalNumberLiteral(src);
+            return cm.ctx.DefaultEvalNumberLiteral(src);
         }
         pub inline fn evalNumberLiteral(comptime src: []const u8) EvalNumberLiteral(src) {
-            if (@hasDecl(Ns, "evalNumberLiteral")) {
+            if (@TypeOf(Ns.evalNumberLiteral) != void) {
                 return Ns.evalNumberLiteral(src);
             }
-            return comath.ctx.defaultEvalNumberLiteral(src);
+            return cm.ctx.defaultEvalNumberLiteral(src);
         }
 
         pub fn EvalIdent(comptime ident: []const u8) type {
-            if (@hasDecl(Ns, "EvalIdent")) {
+            if (@TypeOf(Ns.EvalIdent) != void) {
                 return Ns.EvalIdent(ident);
             }
             return noreturn;
         }
         pub fn evalIdent(ctx: Self, comptime ident: []const u8) !EvalIdent(ident) {
-            if (@hasDecl(Ns, "EvalIdent")) {
+            if (@TypeOf(Ns.EvalIdent) != void) {
                 return ctx.sub_ctx.evalIdent(ident);
             }
             comptime unreachable;
@@ -137,6 +137,19 @@ pub fn FnMethod(
             return ctx.sub_ctx.evalFuncCall(callee, args);
         }
 
+        pub fn EvalMethodCall(comptime lhs: type, comptime method: []const u8, comptime Args: type) type {
+            if (@TypeOf(Ns.EvalMethodCall) != void) {
+                if (Ns.EvalMethodCall(lhs, method, Args) != noreturn) {
+                    return Ns.EvalMethodCall(lhs, method, Args);
+                }
+            }
+            return noreturn;
+        }
+        pub fn evalMethodCall(ctx: @This(), self_param: anytype, comptime method: []const u8, args: anytype) !EvalMethodCall(@TypeOf(self_param), method, @TypeOf(args)) {
+            const func = @field(util.ImplicitDeref(@TypeOf(self_param)), method);
+            return ctx.evalFuncCall(func, .{self_param} ++ args);
+        }
+
         pub fn EvalUnOp(comptime op: []const u8, comptime T: type) type {
             if (getOpMapping(T, op, method_names, 1)) |name| {
                 const Method = util.ImplicitDeref(@TypeOf(@field(T, name)));
@@ -175,20 +188,6 @@ pub fn FnMethod(
             }
             return ctx.sub_ctx.evalBinOp(lhs, op, rhs);
         }
-
-        pub fn EvalMethodCall(comptime lhs: type, comptime method: []const u8, comptime Args: type) type {
-            if (@hasDecl(Ns, "EvalMethodCall")) {
-                if (Ns.EvalMethodCall(lhs, method, Args) != noreturn) {
-                    return Ns.EvalMethodCall(lhs, method, Args);
-                }
-            }
-            return noreturn;
-        }
-        pub fn evalMethodCall(ctx: @This(), self_param: anytype, comptime method: []const u8, args: anytype) !EvalMethodCall(@TypeOf(self_param), method, @TypeOf(args)) {
-            const func = @field(util.ImplicitDeref(@TypeOf(self_param)), method);
-            return ctx.evalFuncCall(func, .{self_param} ++ args);
-        }
-
     };
 }
 
@@ -287,15 +286,15 @@ fn DedupedMethodNames(comptime method_names: anytype) type {
         };
         const old_value: T = @as(*align(1) const old.type, @ptrCast(old.default_value_ptr)).*;
         new.* = .{
-            .name = util.dedupe.scalarValue(old.name[0..].*),
+            .name = old.name,
             .type = T,
             .is_comptime = true,
-            .default_value_ptr = @ptrCast(util.dedupe.scalarValue(old_value)),
+            .default_value_ptr = @ptrCast(&old_value),
             .alignment = 0,
         };
     }
 
-    const deduped_fields = util.dedupe.scalarSlice(std.builtin.Type.StructField, fields);
+    const deduped_fields = util.dedupeScalarSlice(std.builtin.Type.StructField, fields);
     return DedupedMethodNamesImpl(deduped_fields);
 }
 fn DedupedMethodNamesImpl(comptime fields: []const std.builtin.Type.StructField) type {
@@ -308,7 +307,7 @@ fn DedupedMethodNamesImpl(comptime fields: []const std.builtin.Type.StructField)
     } });
 }
 
-test fnMethod {
+test context {
     const CustomNum = enum(i32) {
         _,
 
@@ -334,22 +333,22 @@ test fnMethod {
         }
     };
 
-    const fm_ctx = fnMethod(comath.ctx.simple({}), .{
+    const fm_ctx = context(cm.ctx.simple.context({}), .{
         .@"+" = "add",
         .@"-" = &.{ "sub", "neg" },
         .@"*" = "mul",
         .evalFuncCall = "mul",
     });
-    try std.testing.expectEqual(CustomNum.from(2), comath.eval("a + -b - c", fm_ctx, .{
+    try std.testing.expectEqual(CustomNum.from(2), cm.eval("a + -b - c", fm_ctx, .{
         .a = @as(CustomNum, @enumFromInt(22)),
         .b = @as(CustomNum, @enumFromInt(9)),
         .c = @as(CustomNum, @enumFromInt(11)),
     }));
-    try std.testing.expectEqual(CustomNum.from(77), comath.eval("a(b) * 1", fm_ctx, .{
+    try std.testing.expectEqual(CustomNum.from(77), cm.eval("a(b) * 1", fm_ctx, .{
         .a = @as(CustomNum, @enumFromInt(11)),
         .b = @as(CustomNum, @enumFromInt(7)),
     }));
-    try std.testing.expectEqual(CustomNum.from(62), comath.eval("num(31)(2)", fm_ctx, .{
+    try std.testing.expectEqual(CustomNum.from(62), cm.eval("num(31)(2)", fm_ctx, .{
         .num = CustomNum.from,
     }));
 }

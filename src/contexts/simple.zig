@@ -1,29 +1,29 @@
-const comath = @import("../main.zig");
 const std = @import("std");
+const cm = @import("../main.zig");
 const util = @import("util");
 
 const UnOp = enum { @"-" };
 const BinOp = std.meta.FieldEnum(@TypeOf(relations));
 const relations = .{
-    .@"+" = comath.relation(.left, 10),
-    .@"+|" = comath.relation(.left, 10),
-    .@"+%" = comath.relation(.left, 10),
+    .@"+" = cm.relation(.left, 10),
+    .@"+|" = cm.relation(.left, 10),
+    .@"+%" = cm.relation(.left, 10),
 
-    .@"-" = comath.relation(.left, 10),
-    .@"-|" = comath.relation(.left, 10),
-    .@"-%" = comath.relation(.left, 10),
+    .@"-" = cm.relation(.left, 10),
+    .@"-|" = cm.relation(.left, 10),
+    .@"-%" = cm.relation(.left, 10),
 
-    .@"*" = comath.relation(.left, 20),
-    .@"*|" = comath.relation(.left, 20),
-    .@"*%" = comath.relation(.left, 20),
+    .@"*" = cm.relation(.left, 20),
+    .@"*|" = cm.relation(.left, 20),
+    .@"*%" = cm.relation(.left, 20),
 
-    .@"/" = comath.relation(.left, 20),
-    .@"%" = comath.relation(.left, 20),
+    .@"/" = cm.relation(.left, 20),
+    .@"%" = cm.relation(.left, 20),
 
-    .@"^" = comath.relation(.right, 30),
+    .@"^" = cm.relation(.right, 30),
 };
 
-pub inline fn simple(sub_ctx: anytype) Simple(@TypeOf(sub_ctx)) {
+pub inline fn context(sub_ctx: anytype) Context(@TypeOf(sub_ctx)) {
     const SubCtx = @TypeOf(sub_ctx);
     if (util.NamespaceOf(SubCtx) == null and SubCtx != void) @compileError(
         "Expected struct/union/enum, or pointer to struct/union/enum/opaque, got '" ++ @typeName(SubCtx) ++ "'" ++
@@ -32,24 +32,24 @@ pub inline fn simple(sub_ctx: anytype) Simple(@TypeOf(sub_ctx)) {
     return .{ .sub_ctx = sub_ctx };
 }
 
-pub fn Simple(comptime SubCtx: type) type {
+pub fn Context(comptime SubCtx: type) type {
     return struct {
         sub_ctx: SubCtx,
         const Self = @This();
-        const Ns = util.NamespaceOf(SubCtx) orelse struct {};
+        const Ns = util.NamespaceOf(SubCtx) orelse cm.ctx.Null;
 
         pub inline fn matchUnOp(comptime str: []const u8) bool {
-            const sub_match = @hasDecl(Ns, "matchUnOp") and Ns.matchUnOp(str);
+            const sub_match = @TypeOf(Ns.matchUnOp) != void and Ns.matchUnOp(str);
             return sub_match or @hasField(UnOp, str);
         }
 
         pub inline fn matchBinOp(comptime str: []const u8) bool {
-            const sub_match = @hasDecl(Ns, "matchBinOp") and Ns.matchBinOp(str);
+            const sub_match = @TypeOf(Ns.matchBinOp) != void and Ns.matchBinOp(str);
             return sub_match or @hasField(BinOp, str);
         }
 
-        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?comath.Order {
-            if (@hasDecl(Ns, "orderBinOp")) blk: {
+        pub inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?cm.Order {
+            if (@TypeOf(Ns.orderBinOp) != void) blk: {
                 const order = Ns.orderBinOp(lhs, rhs) orelse break :blk;
                 return order;
             }
@@ -58,11 +58,11 @@ pub fn Simple(comptime SubCtx: type) type {
             return @field(relations, lhs).order(@field(relations, rhs));
         }
 
-        pub const EvalNumberLiteral = comath.ctx.DefaultEvalNumberLiteral;
-        pub const evalNumberLiteral = comath.ctx.defaultEvalNumberLiteral;
+        pub const EvalNumberLiteral = cm.ctx.DefaultEvalNumberLiteral;
+        pub const evalNumberLiteral = cm.ctx.defaultEvalNumberLiteral;
 
         pub fn EvalIdent(comptime ident: []const u8) type {
-            if (@hasDecl(Ns, "EvalIdent")) {
+            if (@TypeOf(Ns.EvalIdent) != void) {
                 if (Ns.EvalIdent(ident) != noreturn) {
                     return Ns.EvalIdent(ident);
                 }
@@ -70,7 +70,7 @@ pub fn Simple(comptime SubCtx: type) type {
             return noreturn;
         }
         pub inline fn evalIdent(ctx: @This(), comptime ident: []const u8) !EvalIdent(ident) {
-            if (@hasDecl(Ns, "EvalIdent")) {
+            if (@TypeOf(Ns.EvalIdent) != void) {
                 if (Ns.EvalIdent(ident) != noreturn) {
                     return ctx.sub_ctx.evalIdent(ident);
                 }
@@ -79,7 +79,7 @@ pub fn Simple(comptime SubCtx: type) type {
         }
 
         pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {
-            if (@hasDecl(Ns, "EvalProperty")) {
+            if (@TypeOf(Ns.EvalProperty) != void) {
                 if (Ns.EvalProperty(Lhs, field) != noreturn) {
                     return Ns.EvalProperty(Lhs, field);
                 }
@@ -88,7 +88,7 @@ pub fn Simple(comptime SubCtx: type) type {
         }
         pub inline fn evalProperty(ctx: Self, lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field) {
             const Lhs = @TypeOf(lhs);
-            if (@hasDecl(Ns, "EvalProperty")) {
+            if (@TypeOf(Ns.EvalProperty) != void) {
                 if (Ns.EvalProperty(Lhs, field) != noreturn) {
                     return ctx.sub_ctx.evalProperty(lhs, field);
                 }
@@ -97,7 +97,7 @@ pub fn Simple(comptime SubCtx: type) type {
         }
 
         pub fn EvalIndexAccess(comptime Lhs: type, comptime Rhs: type) type {
-            if (@hasDecl(Ns, "EvalIndexAccess")) {
+            if (@TypeOf(Ns.EvalIndexAccess) != void) {
                 if (Ns.EvalIndexAccess(Lhs, Rhs) != noreturn) {
                     return Ns.EvalIndexAccess(Lhs, Rhs);
                 }
@@ -108,7 +108,7 @@ pub fn Simple(comptime SubCtx: type) type {
             const Lhs = @TypeOf(lhs);
             const Rhs = @TypeOf(rhs);
             if (!@typeInfo(Rhs).@"struct".is_tuple) comptime unreachable;
-            if (@hasDecl(Ns, "EvalIndexAccess")) {
+            if (@TypeOf(Ns.EvalIndexAccess) != void) {
                 if (Ns.EvalIndexAccess(Lhs, Rhs) != noreturn) {
                     return ctx.sub_ctx.evalIndexAccess(lhs, rhs);
                 }
@@ -118,7 +118,7 @@ pub fn Simple(comptime SubCtx: type) type {
         }
 
         pub fn EvalFuncCall(comptime Callee: type, comptime Args: type) type {
-            if (@hasDecl(Ns, "EvalFuncCall")) {
+            if (@TypeOf(Ns.EvalFuncCall) != void) {
                 if (Ns.EvalFuncCall(Callee, Args) != noreturn) {
                     return Ns.EvalFuncCall(Callee, Args);
                 }
@@ -134,7 +134,7 @@ pub fn Simple(comptime SubCtx: type) type {
             const Callee = @TypeOf(callee);
             const Args = @TypeOf(args);
 
-            if (@hasDecl(Ns, "EvalFuncCall")) {
+            if (@TypeOf(Ns.EvalFuncCall) != void) {
                 if (Ns.EvalFuncCall(Callee, Args) != noreturn) {
                     return ctx.sub_ctx.evalFuncCall(callee, args);
                 }
@@ -142,8 +142,28 @@ pub fn Simple(comptime SubCtx: type) type {
             return @call(.auto, callee, args);
         }
 
+        pub fn EvalMethodCall(comptime SelfParam: type, comptime method: []const u8, comptime Args: type) type {
+            const SelfNs = util.ImplicitDeref(SelfParam);
+            _ = Args;
+            if (!@hasDecl(SelfNs, method)) return noreturn;
+            const MethodType = @TypeOf(@field(SelfNs, method));
+
+            if (@typeInfo(MethodType) != .@"fn") return noreturn;
+            const params = @typeInfo(MethodType).@"fn".params;
+
+            if (params.len == 0) return noreturn;
+            const Expected = util.ImplicitDeref(params[0].type orelse *const SelfParam);
+
+            if (SelfNs != Expected) return noreturn;
+            return @typeInfo(MethodType).@"fn".return_type.?;
+        }
+        pub fn evalMethodCall(ctx: @This(), self_param: anytype, comptime method: []const u8, args: anytype) !EvalMethodCall(@TypeOf(self_param), method, @TypeOf(args)) {
+            const func = @field(util.ImplicitDeref(@TypeOf(self_param)), method);
+            return ctx.evalFuncCall(func, .{self_param} ++ args);
+        }
+
         pub fn EvalUnOp(comptime op: []const u8, comptime T: type) type {
-            if (@hasDecl(Ns, "EvalUnOp")) {
+            if (@TypeOf(Ns.EvalUnOp) != void) {
                 if (Ns.EvalUnOp(op, T) != noreturn) {
                     return Ns.EvalUnOp(op, T);
                 }
@@ -154,7 +174,7 @@ pub fn Simple(comptime SubCtx: type) type {
             };
         }
         pub inline fn evalUnOp(ctx: Self, comptime op: []const u8, val: anytype) !EvalUnOp(op, @TypeOf(val)) {
-            if (@hasDecl(Ns, "EvalUnOp")) {
+            if (@TypeOf(Ns.EvalUnOp) != void) {
                 if (Ns.EvalUnOp(op, @TypeOf(val)) != noreturn) {
                     return ctx.sub_ctx.evalUnOp(op, val);
                 }
@@ -165,7 +185,7 @@ pub fn Simple(comptime SubCtx: type) type {
         }
 
         pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {
-            if (@hasDecl(Ns, "EvalBinOp")) {
+            if (@TypeOf(Ns.EvalBinOp) != void) {
                 if (Ns.EvalBinOp(Lhs, op, Rhs) != noreturn) {
                     return Ns.EvalBinOp(Lhs, op, Rhs);
                 }
@@ -201,7 +221,7 @@ pub fn Simple(comptime SubCtx: type) type {
         pub inline fn evalBinOp(ctx: Self, lhs: anytype, comptime op: []const u8, rhs: anytype) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
             const Lhs = @TypeOf(lhs);
             const Rhs = @TypeOf(rhs);
-            if (@hasDecl(Ns, "EvalBinOp")) {
+            if (@TypeOf(Ns.EvalBinOp) != void) {
                 if (Ns.EvalBinOp(Lhs, op, Rhs) != noreturn) {
                     return ctx.sub_ctx.evalBinOp(lhs, op, rhs);
                 }
@@ -237,38 +257,18 @@ pub fn Simple(comptime SubCtx: type) type {
                 },
             };
         }
-
-        pub fn EvalMethodCall(comptime SelfParam: type, comptime method: []const u8, comptime Args: type) type {
-            const SelfNs = util.ImplicitDeref(SelfParam);
-            _ = Args;
-            if (!@hasDecl(SelfNs, method)) return noreturn;
-            const MethodType = @TypeOf(@field(SelfNs, method));
-
-            if (@typeInfo(MethodType) != .@"fn") return noreturn;
-            const params = @typeInfo(MethodType).@"fn".params;
-
-            if (params.len == 0) return noreturn;
-            const Expected = util.ImplicitDeref(params[0].type orelse *const SelfParam);
-
-            if (SelfNs != Expected) return noreturn;
-            return @typeInfo(MethodType).@"fn".return_type.?;
-        }
-        pub fn evalMethodCall(ctx: @This(), self_param: anytype, comptime method: []const u8, args: anytype) !EvalMethodCall(@TypeOf(self_param), method, @TypeOf(args)) {
-            const func = @field(util.ImplicitDeref(@TypeOf(self_param)), method);
-            return ctx.evalFuncCall(func, .{self_param} ++ args);
-        }
     };
 }
 
-test simple {
-    try std.testing.expectEqual(5, comath.eval("a + b", simple({}), .{ .a = 2, .b = 3 }));
-    try std.testing.expectEqual(1, comath.eval("a +% b", simple({}), .{ .a = @as(u8, std.math.maxInt(u8)), .b = 2 }));
-    try std.testing.expectEqual(59049, comath.eval("3^(2 * a + -b)", simple({}), .{ .a = 7, .b = 4 }));
+test context {
+    try std.testing.expectEqual(5, cm.eval("a + b", context({}), .{ .a = 2, .b = 3 }));
+    try std.testing.expectEqual(1, cm.eval("a +% b", context({}), .{ .a = @as(u8, std.math.maxInt(u8)), .b = 2 }));
+    try std.testing.expectEqual(59049, cm.eval("3^(2 * a + -b)", context({}), .{ .a = 7, .b = 4 }));
 
     // complex precedence interactions
-    try std.testing.expectEqual(6 - 3 + 4 + 2, comath.eval("6*1-3*1+4*1+2", simple({}), .{}));
+    try std.testing.expectEqual(6 - 3 + 4 + 2, cm.eval("6*1-3*1+4*1+2", context({}), .{}));
 
-    const op_override_ctx = simple(struct {
+    const op_override_ctx = context(struct {
         const OverrideUnOp = enum { @"++" };
         pub inline fn matchUnOp(comptime str: []const u8) bool {
             return @hasField(OverrideUnOp, str);
@@ -308,7 +308,7 @@ test simple {
             };
         }
     }{});
-    try std.testing.expectEqual(2, comath.eval("(++2 ^ 5) $ 36", op_override_ctx, .{}));
+    try std.testing.expectEqual(2, cm.eval("(++2 ^ 5) $ 36", op_override_ctx, .{}));
 }
 
 test "field access" {
@@ -321,10 +321,10 @@ test "field access" {
 
     try std.testing.expectEqual(
         1,
-        comath.eval("v.x", simple({}), .{ .v = v }),
+        cm.eval("v.x", context({}), .{ .v = v }),
     );
     try std.testing.expectEqual(
         2,
-        comath.eval("v.y", simple({}), .{ .v = v }),
+        cm.eval("v.y", context({}), .{ .v = v }),
     );
 }

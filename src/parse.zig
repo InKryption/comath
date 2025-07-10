@@ -1,14 +1,13 @@
-const comath = @import("main.zig");
-
 const std = @import("std");
 const assert = std.debug.assert;
 
+const cm = @import("main.zig");
 const util = @import("util");
 
 const Tokenizer = @import("Tokenizer.zig");
 
 const MatchOpFn = fn (comptime str: []const u8) callconv(.Inline) bool;
-const OrderBinOpFn = fn (comptime lhs: []const u8, comptime rhs: []const u8) callconv(.Inline) ?comath.Order;
+const OrderBinOpFn = fn (comptime lhs: []const u8, comptime rhs: []const u8) callconv(.Inline) ?cm.Order;
 
 pub fn parseExpr(
     comptime expr: []const u8,
@@ -17,7 +16,7 @@ pub fn parseExpr(
     comptime maybeOrderBinOp: ?OrderBinOpFn,
 ) ExprNode {
     comptime {
-        const deduped_expr = util.dedupe.scalarSlice(u8, expr[0..].*);
+        const deduped_expr = util.dedupeScalarSlice(u8, expr[0..].*);
         var tokenizer: Tokenizer = .init;
         const result, _ = parseExprImpl(
             &tokenizer,
@@ -94,7 +93,7 @@ fn parseExprImpl(
                             break :mainloop;
                         }
 
-                        const op = util.dedupe.scalarSlice(u8, op_symbols[start..][0..len].*);
+                        const op = util.dedupeScalarSlice(u8, op_symbols[start..][0..len].*);
                         if (!matchBinOp(op)) {
                             len -= 1;
                             continue;
@@ -118,7 +117,7 @@ fn parseExprImpl(
                         break;
                     }
 
-                    const op = util.dedupe.scalarSlice(u8, op_symbols[start..][0..len].*);
+                    const op = util.dedupeScalarSlice(u8, op_symbols[start..][0..len].*);
                     if (!matchUnOp(op)) {
                         len -= 1;
                         continue;
@@ -652,10 +651,10 @@ fn ParseExprTester(
         inline fn matchBinOp(comptime str: []const u8) bool {
             return @hasField(BinOp, str);
         }
-        inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?comath.Order {
+        inline fn orderBinOp(comptime lhs: []const u8, comptime rhs: []const u8) ?cm.Order {
             comptime if (!matchBinOp(lhs) or !matchBinOp(rhs)) return null;
-            const lhs_rel: comath.Relation = if (@hasField(@TypeOf(relations), lhs)) @field(relations, lhs) else return null;
-            const rhs_rel: comath.Relation = if (@hasField(@TypeOf(relations), rhs)) @field(relations, rhs) else return null;
+            const lhs_rel: cm.Relation = if (@hasField(@TypeOf(relations), lhs)) @field(relations, lhs) else return null;
+            const rhs_rel: cm.Relation = if (@hasField(@TypeOf(relations), rhs)) @field(relations, rhs) else return null;
             return lhs_rel.order(rhs_rel);
         }
     };
@@ -690,13 +689,13 @@ test parseExpr {
         enum { @"-", @"~", @"!" },
         enum { @"-", @"+", @"*", @"/", @"^", @"<", @">", @"&" },
         .{
-            .@"<" = comath.relation(.none, 0),
-            .@">" = comath.relation(.none, 0),
-            .@"-" = comath.relation(.left, 1),
-            .@"+" = comath.relation(.left, 1),
-            .@"*" = comath.relation(.left, 2),
-            .@"/" = comath.relation(.left, 2),
-            .@"^" = comath.relation(.right, 3),
+            .@"<" = cm.relation(.none, 0),
+            .@">" = cm.relation(.none, 0),
+            .@"-" = cm.relation(.left, 1),
+            .@"+" = cm.relation(.left, 1),
+            .@"*" = cm.relation(.left, 2),
+            .@"/" = cm.relation(.left, 2),
+            .@"^" = cm.relation(.right, 3),
         },
     );
     const number = test_helpers.number;

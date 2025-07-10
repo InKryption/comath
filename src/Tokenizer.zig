@@ -129,7 +129,7 @@ pub inline fn next(
     comptime buffer: []const u8,
 ) Token {
     comptime {
-        const result = tokenizer.peekImpl(util.dedupe.scalarSlice(u8, buffer[0..].*));
+        const result = tokenizer.peekImpl(util.dedupeScalarSlice(u8, buffer[0..].*));
         tokenizer.* = result.state;
         return result.token;
     }
@@ -139,7 +139,7 @@ pub inline fn peek(
     comptime tokenizer: Tokenizer,
     comptime buffer: []const u8,
 ) Token {
-    const result = tokenizer.peekImpl(util.dedupe.scalarSlice(u8, buffer[0..].*));
+    const result = tokenizer.peekImpl(util.dedupeScalarSlice(u8, buffer[0..].*));
     return result.token;
 }
 
@@ -200,7 +200,7 @@ fn peekImpl(
         => {
             const start = tokenizer.index;
             const end = util.indexOfNonePosComptime(u8, buffer[0..].*, start + 1, identifier_characters) orelse buffer.len;
-            const ident = util.dedupe.scalarSlice(u8, buffer[start..end].*);
+            const ident = util.dedupeScalarSlice(u8, buffer[start..end].*);
             return .{
                 .state = .{ .index = end },
                 .token = .{ .ident = ident },
@@ -209,7 +209,7 @@ fn peekImpl(
         '.' => {
             const start = util.indexOfNonePosComptime(u8, buffer[0..].*, tokenizer.index + 1, whitespace_characters[0..].*) orelse buffer.len;
             const end = util.indexOfNonePosComptime(u8, buffer[0..].*, @min(buffer.len, start + 1), field_access_characters) orelse buffer.len;
-            const ident = util.dedupe.scalarSlice(u8, buffer[start..end].*);
+            const ident = util.dedupeScalarSlice(u8, buffer[start..end].*);
             if (ident.len == 0 or
                 !util.containsScalarComptime(u8, field_access_characters, ident[0]) //
             ) return .{
@@ -228,7 +228,7 @@ fn peekImpl(
             const zig_tok = zig_tokenizer.next();
 
             if (zig_tok.loc.start != 0) unreachable;
-            const literal_src = util.dedupe.scalarSlice(u8, buffer[start..][zig_tok.loc.start..zig_tok.loc.end].*);
+            const literal_src = util.dedupeScalarSlice(u8, buffer[start..][zig_tok.loc.start..zig_tok.loc.end].*);
 
             return .{
                 .state = .{ .index = start + literal_src.len },
@@ -244,7 +244,7 @@ fn peekImpl(
             };
             return .{
                 .state = .{ .index = end },
-                .token = .{ .op_symbols = util.dedupe.scalarSlice(u8, buffer[start..end].*) },
+                .token = .{ .op_symbols = util.dedupeScalarSlice(u8, buffer[start..end].*) },
             };
         },
     }

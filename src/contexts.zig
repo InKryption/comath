@@ -1,23 +1,17 @@
-const comath = @import("main.zig");
 const std = @import("std");
+const cm = @import("main.zig");
 const util = @import("util");
 
-const simple_ctx = @import("contexts/simple.zig");
-pub const Simple = simple_ctx.Simple;
-pub const simple = simple_ctx.simple;
-
-const fn_method_ctx = @import("contexts/fn_method.zig");
-pub const FnMethod = fn_method_ctx.FnMethod;
-pub const fnMethod = fn_method_ctx.fnMethod;
-
-const namespace_ctx = @import("contexts/namespace.zig");
-pub const Namespace = namespace_ctx.Namespace;
-pub const namespace = namespace_ctx.namespace;
+pub const Null = @import("contexts/Null.zig");
+pub const simple = @import("contexts/simple.zig");
+pub const fn_method = @import("contexts/fn_method.zig");
+pub const namespace = @import("contexts/namespace.zig");
 
 comptime {
-    _ = simple_ctx;
-    _ = fn_method_ctx;
-    _ = namespace_ctx;
+    _ = Null;
+    _ = simple;
+    _ = fn_method;
+    _ = namespace;
 }
 
 pub fn DefaultEvalNumberLiteral(comptime src: []const u8) type {
