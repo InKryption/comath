@@ -59,8 +59,18 @@ fn parseExprImpl(
         mainloop: while (true) switch (tokenizer.next(expr)) {
             .eof => break,
             .err => |err| switch (err) {
-                .empty_field_access => |start| {
-                    result = .{ .err = std.fmt.comptimePrint("Expected field access characters after period ('.'), instead found '{}'", .{Tokenizer.peek(.{ .index = start }, expr)}) };
+                .empty_field_access => {
+                    result = .{ .err = std.fmt.comptimePrint(
+                        "Expected field access characters after period ('.')",
+                        .{},
+                    ) };
+                    break :mainloop;
+                },
+                .unexpected_byte => |byte| {
+                    result = .{ .err = std.fmt.comptimePrint(
+                        "Invalid byte '{c}'",
+                        .{byte},
+                    ) };
                     break :mainloop;
                 },
             },

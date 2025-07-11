@@ -200,11 +200,22 @@ pub fn Expr(
                         .null => noreturn,
                         .err => noreturn,
                         .ident => |ident| blk: {
-                            const IdentType = Ns.EvalIdent(ident);
-                            if (IdentType != noreturn) break :blk IdentType;
+                            if (@TypeOf(Ns.EvalIdent) != void) {
+                                const IdentType = Ns.EvalIdent(ident);
+                                if (IdentType != noreturn) break :blk IdentType;
+                            }
+                            if (!@hasField(Inputs, ident)) {
+                                break :blk noreturn;
+                            }
                             break :blk @FieldType(Inputs, ident);
                         },
-                        .number => |number| Ns.EvalNumberLiteral(number),
+                        .number => |number| blk: {
+                            const EvalNumberLiteral = Ns.EvalNumberLiteral;
+                            if (@TypeOf(EvalNumberLiteral) == void) {
+                                break :blk noreturn;
+                            }
+                            break :blk EvalNumberLiteral(number);
+                        },
                         .group => |group| EvalImpl(group.*),
                         .field_access => |fa| blk: {
                             const Lhs = EvalImpl(fa.accessed);
@@ -252,11 +263,31 @@ pub fn Expr(
                         .err => |err| @compileError(err),
 
                         .ident => |ident| blk: {
-                            const IdentType = Ns.EvalIdent(ident);
-                            if (IdentType != noreturn) break :blk ctx.evalIdent(ident);
+                            const EvalIdent = Ns.EvalIdent;
+                            const evalIdent = Ns.evalIdent;
+                            if (@TypeOf(EvalIdent) != void) {
+                                if (@TypeOf(evalIdent) == void) @compileError(
+                                    "Can't have a type & value method pair be mismatched",
+                                );
+                                if (EvalIdent(ident) != noreturn) {
+                                    break :blk ctx.evalIdent(ident);
+                                }
+                            }
                             break :blk @field(inputs, ident);
                         },
-                        .number => |number| Ns.evalNumberLiteral(number),
+                        .number => |number| blk: {
+                            const EvalNumberLiteral = Ns.EvalNumberLiteral;
+                            const evalNumberLiteral = Ns.evalNumberLiteral;
+                            if (@TypeOf(EvalNumberLiteral) != void) {
+                                if (@TypeOf(evalNumberLiteral) == void) @compileError(
+                                    "Can't have a type & value method pair be mismatched",
+                                );
+                                if (EvalNumberLiteral(number) != noreturn) {
+                                    break :blk evalNumberLiteral(number);
+                                }
+                            }
+                            @compileError("Lacking implementation for evalNumberLiteral");
+                        },
                         .group => |group| evalImpl(group.*, ctx, inputs),
                         .field_access => |fa| blk: {
                             const Lhs = EvalImpl(fa.accessed);
