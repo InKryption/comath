@@ -48,19 +48,6 @@ pub inline fn eqlComptime(comptime T: type, comptime a: []const T, comptime b: [
     }
 }
 
-pub inline fn containsScalarComptime(
-    comptime T: type,
-    comptime haystack: anytype,
-    comptime needle: T,
-) bool {
-    comptime {
-        if (@TypeOf(haystack) != [haystack.len]T) unreachable;
-        const needle_vec: @Vector(haystack.len, T) = @splat(needle);
-        const matches = haystack == needle_vec;
-        return @reduce(.Or, matches);
-    }
-}
-
 pub inline fn typeIsComptimeOnly(comptime T: type) ?bool {
     comptime return switch (@typeInfo(T)) {
         .type => true,

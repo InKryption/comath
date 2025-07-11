@@ -215,9 +215,13 @@ fn peekImpl(
             const start = indexOfNonePosComptime(u8, buffer[0..].*, tokenizer.index + 1, whitespace_characters[0..].*) orelse buffer.len;
             const end = indexOfNonePosComptime(u8, buffer[0..].*, @min(buffer.len, start + 1), field_access_characters) orelse buffer.len;
             const ident = util.dedupeScalarSlice(u8, buffer[start..end].*);
-            if (ident.len == 0 or
-                !util.containsScalarComptime(u8, field_access_characters, ident[0]) //
-            ) return .{
+            const is_empty_field_access = ident.len == 0 or blk: {
+                const haystack = field_access_characters;
+                const needle_vec: @Vector(haystack.len, u8) = @splat(ident[0]);
+                const non_matches = haystack != needle_vec;
+                break :blk @reduce(.And, non_matches);
+            };
+            if (is_empty_field_access) return .{
                 .state = .{ .index = start },
                 .token = .{ .err = .empty_field_access },
             };
