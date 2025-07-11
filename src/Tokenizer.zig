@@ -106,7 +106,10 @@ pub const Token = union(enum) {
             .field,
             .number,
             .op_symbols,
-            => |str, tag| try writer.writeAll(comptime std.fmt.comptimePrint("{s}({s})", .{ @tagName(tag), str })),
+            => |str, tag| try writer.writeAll(comptime std.fmt.comptimePrint(
+                "{s}({s})",
+                .{ @tagName(tag), str },
+            )),
 
             .eof,
             .comma,
@@ -117,8 +120,14 @@ pub const Token = union(enum) {
             => try writer.writeAll(@tagName(self)),
 
             .err => |err| switch (err) {
-                .empty_field_access => |_| try writer.writeAll(comptime std.fmt.comptimePrint("{s}({s})", .{ @tagName(self), @tagName(err) })),
-                .unexpected_byte => |byte| try writer.writeAll(comptime std.fmt.comptimePrint("{s}({s}('{'}'))", .{ @tagName(self), @tagName(err), std.zig.fmtEscapes(@as(*const [1]u8, &byte)) })),
+                .empty_field_access => try writer.writeAll(comptime std.fmt.comptimePrint(
+                    "{s}({s})",
+                    .{ @tagName(self), @tagName(err) },
+                )),
+                .unexpected_byte => |byte| try writer.writeAll(comptime std.fmt.comptimePrint(
+                    "{s}({s}('{'}'))",
+                    .{ @tagName(self), @tagName(err), std.zig.fmtEscapes(@as(*const [1]u8, &byte)) },
+                )),
             },
         }
     }
@@ -246,7 +255,12 @@ fn peekImpl(
         },
         else => |first_byte| {
             const start = tokenizer.index;
-            const end = indexOfNonePosComptime(u8, buffer[0..].*, start, operator_characters[0..].*) orelse buffer.len;
+            const end = indexOfNonePosComptime(
+                u8,
+                buffer[0..].*,
+                start,
+                operator_characters[0..].*,
+            ) orelse buffer.len;
             if (start == end) return .{
                 .state = .{ .index = end + 1 },
                 .token = .{ .err = .{ .unexpected_byte = first_byte } },
