@@ -48,19 +48,6 @@ pub inline fn eqlComptime(comptime T: type, comptime a: []const T, comptime b: [
     }
 }
 
-pub fn indexOfDiffComptime(comptime T: type, comptime a: []const T, comptime b: []const T) ?comptime_int {
-    const shortest = @min(a.len, b.len);
-    const V = @Vector(shortest, T);
-    const neqls_vec = @as(V, a[0..shortest].*) != @as(V, b[0..shortest].*);
-    const mask: std.meta.Int(.unsigned, shortest) = @bitCast(neqls_vec);
-    const idx = @clz(mask);
-    if (idx == shortest) {
-        if (a.len == b.len) return null;
-        return shortest;
-    }
-    return idx;
-}
-
 pub inline fn containsScalarComptime(
     comptime T: type,
     comptime haystack: anytype,
