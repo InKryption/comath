@@ -62,19 +62,13 @@ test eval {
         pub const EvalNumberLiteral = cm.ctx.DefaultEvalNumberLiteral;
         pub const evalNumberLiteral = cm.ctx.defaultEvalNumberLiteral;
 
-        pub fn EvalIdent(comptime ident: []const u8) type {
-            _ = ident;
-            return noreturn;
-        }
-        pub fn evalIdent(ctx: @This(), comptime ident: []const u8) EvalIdent(ident) {
-            _ = ctx;
-            @compileError("Should not be referenced");
-        }
+        pub const EvalIdent = {};
+        pub const evalIdent = {};
 
         pub fn EvalProperty(comptime Lhs: type, comptime field: []const u8) type {
             return @FieldType(Lhs, field);
         }
-        pub fn evalProperty(_: @This(), lhs: anytype, comptime field: []const u8) EvalProperty(@TypeOf(lhs), field) {
+        pub fn evalProperty(_: @This(), lhs: anytype, comptime field: []const u8) !EvalProperty(@TypeOf(lhs), field) {
             return @field(lhs, field);
         }
 
@@ -85,7 +79,7 @@ test eval {
                 else => |n| [n]std.meta.Elem(Lhs),
             };
         }
-        pub fn evalIndexAccess(_: @This(), lhs: anytype, rhs: anytype) EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
+        pub fn evalIndexAccess(_: @This(), lhs: anytype, rhs: anytype) !EvalIndexAccess(@TypeOf(lhs), @TypeOf(rhs)) {
             return switch (@typeInfo(@TypeOf(rhs)).@"struct".fields.len) {
                 0 => lhs,
                 1 => lhs[rhs[0]],
@@ -102,11 +96,15 @@ test eval {
             _ = Args;
             return @typeInfo(util.ImplicitDeref(Callee)).@"fn".return_type.?;
         }
-        pub fn evalFuncCall(_: @This(), callee: anytype, args: anytype) EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
+        pub fn evalFuncCall(_: @This(), callee: anytype, args: anytype) !EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
             return @call(.auto, callee, args);
         }
 
-        pub fn EvalMethodCall(comptime SelfParam: type, comptime method: []const u8, comptime Args: type) type {
+        pub fn EvalMethodCall(
+            comptime SelfParam: type,
+            comptime method: []const u8,
+            comptime Args: type,
+        ) type {
             const SelfNs = util.ImplicitDeref(SelfParam);
             _ = Args;
             if (@TypeOf(@field(SelfNs, method)) == void) return noreturn;
@@ -121,7 +119,12 @@ test eval {
             if (SelfNs != Expected) return noreturn;
             return @typeInfo(MethodType).@"fn".return_type.?;
         }
-        pub fn evalMethodCall(ctx: @This(), self_param: anytype, comptime method: []const u8, args: anytype) EvalMethodCall(@TypeOf(self_param), method, @TypeOf(args)) {
+        pub fn evalMethodCall(
+            ctx: @This(),
+            self_param: anytype,
+            comptime method: []const u8,
+            args: anytype,
+        ) !EvalMethodCall(@TypeOf(self_param), method, @TypeOf(args)) {
             const func = @field(util.ImplicitDeref(@TypeOf(self_param)), method);
             return ctx.evalFuncCall(func, .{self_param} ++ args);
         }
@@ -130,20 +133,29 @@ test eval {
             _ = op;
             return T;
         }
-        pub fn evalUnOp(_: @This(), comptime op: []const u8, val: anytype) EvalUnOp(op, @TypeOf(val)) {
+        pub fn evalUnOp(_: @This(), comptime op: []const u8, val: anytype) !EvalUnOp(op, @TypeOf(val)) {
             return switch (@field(UnOp, op)) {
                 .@"-" => -val,
             };
         }
 
-        pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {
+        pub fn EvalBinOp(
+            comptime Lhs: type,
+            comptime op: []const u8,
+            comptime Rhs: type,
+        ) type {
             _ = op;
             return @TypeOf(
                 @as(Lhs, undefined),
                 @as(Rhs, undefined),
             );
         }
-        pub fn evalBinOp(_: @This(), lhs: anytype, comptime op: []const u8, rhs: anytype) EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+        pub fn evalBinOp(
+            _: @This(),
+            lhs: anytype,
+            comptime op: []const u8,
+            rhs: anytype,
+        ) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
             return switch (@field(BinOp, op)) {
                 .@"+" => lhs + rhs,
                 .@"-" => lhs - rhs,

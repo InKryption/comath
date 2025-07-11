@@ -155,7 +155,11 @@ pub fn Context(comptime SubCtx: type) type {
             }
             return @typeInfo(Callee).@"fn".return_type.?;
         }
-        pub fn evalFuncCall(ctx: Self, callee: anytype, args: anytype) EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
+        pub fn evalFuncCall(
+            ctx: Self,
+            callee: anytype,
+            args: anytype,
+        ) !EvalFuncCall(@TypeOf(callee), @TypeOf(args)) {
             const Callee = @TypeOf(callee);
             const Args = @TypeOf(args);
             if (@TypeOf(Ns.evalFuncCall) != void) blk: {
@@ -344,7 +348,7 @@ test context {
                 .@"++" => T,
             };
         }
-        pub fn evalUnOp(_: @This(), comptime op: []const u8, val: anytype) EvalUnOp(op, @TypeOf(val)) {
+        pub fn evalUnOp(_: @This(), comptime op: []const u8, val: anytype) !EvalUnOp(op, @TypeOf(val)) {
             return switch (@field(OverrideUnOp, op)) {
                 .@"++" => val + 1,
             };
@@ -354,7 +358,11 @@ test context {
             .@"$" = .{ .prec = 2, .assoc = .right },
         };
 
-        pub fn EvalBinOp(comptime Lhs: type, comptime op: []const u8, comptime Rhs: type) type {
+        pub fn EvalBinOp(
+            comptime Lhs: type,
+            comptime op: []const u8,
+            comptime Rhs: type,
+        ) type {
             return switch (@field(OverrideBinOp, op)) {
                 .@"^", .@"$" => @TypeOf(
                     @as(Lhs, undefined),
@@ -362,7 +370,12 @@ test context {
                 ),
             };
         }
-        pub fn evalBinOp(_: @This(), lhs: anytype, comptime op: []const u8, rhs: anytype) EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
+        pub fn evalBinOp(
+            _: @This(),
+            lhs: anytype,
+            comptime op: []const u8,
+            rhs: anytype,
+        ) !EvalBinOp(@TypeOf(lhs), op, @TypeOf(rhs)) {
             return switch (@field(OverrideBinOp, op)) {
                 .@"^" => lhs ^ rhs,
                 .@"$" => std.math.log(@TypeOf(lhs, rhs), lhs, rhs),
