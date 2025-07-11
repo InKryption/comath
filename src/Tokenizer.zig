@@ -157,7 +157,12 @@ fn peekImpl(
         var tokenizer = tokenizer_init;
         switch ((buffer ++ &[_:0]u8{})[tokenizer.index]) {
             ' ', '\t', '\n' => {
-                const whitespace_end = util.indexOfNonePosComptime(u8, buffer[0..].*, tokenizer.index + 1, whitespace_characters[0..].*) orelse buffer.len;
+                const whitespace_end = indexOfNonePosComptime(
+                    u8,
+                    buffer[0..].*,
+                    tokenizer.index + 1,
+                    whitespace_characters[0..].*,
+                ) orelse buffer.len;
                 tokenizer.index = whitespace_end;
             },
             else => {},
@@ -199,7 +204,7 @@ fn peekImpl(
         '_',
         => {
             const start = tokenizer.index;
-            const end = util.indexOfNonePosComptime(u8, buffer[0..].*, start + 1, identifier_characters) orelse buffer.len;
+            const end = indexOfNonePosComptime(u8, buffer[0..].*, start + 1, identifier_characters) orelse buffer.len;
             const ident = util.dedupeScalarSlice(u8, buffer[start..end].*);
             return .{
                 .state = .{ .index = end },
@@ -207,8 +212,8 @@ fn peekImpl(
             };
         },
         '.' => {
-            const start = util.indexOfNonePosComptime(u8, buffer[0..].*, tokenizer.index + 1, whitespace_characters[0..].*) orelse buffer.len;
-            const end = util.indexOfNonePosComptime(u8, buffer[0..].*, @min(buffer.len, start + 1), field_access_characters) orelse buffer.len;
+            const start = indexOfNonePosComptime(u8, buffer[0..].*, tokenizer.index + 1, whitespace_characters[0..].*) orelse buffer.len;
+            const end = indexOfNonePosComptime(u8, buffer[0..].*, @min(buffer.len, start + 1), field_access_characters) orelse buffer.len;
             const ident = util.dedupeScalarSlice(u8, buffer[start..end].*);
             if (ident.len == 0 or
                 !util.containsScalarComptime(u8, field_access_characters, ident[0]) //
@@ -237,7 +242,7 @@ fn peekImpl(
         },
         else => |first_byte| {
             const start = tokenizer.index;
-            const end = util.indexOfNonePosComptime(u8, buffer[0..].*, start, operator_characters[0..].*) orelse buffer.len;
+            const end = indexOfNonePosComptime(u8, buffer[0..].*, start, operator_characters[0..].*) orelse buffer.len;
             if (start == end) return .{
                 .state = .{ .index = end + 1 },
                 .token = .{ .err = .{ .unexpected_byte = first_byte } },
@@ -249,6 +254,33 @@ fn peekImpl(
         },
     }
     return null;
+}
+
+fn indexOfNonePosComptime(
+    comptime T: type,
+    comptime haystack: anytype,
+    comptime start: comptime_int,
+    comptime excluded: anytype,
+) ?comptime_int {
+    if (@TypeOf(haystack) != [haystack.len]T) unreachable;
+    if (@TypeOf(excluded) != [excluded.len]T) unreachable;
+    if (excluded.len == 0) unreachable;
+    if (haystack.len == 0) return null;
+    if (start == haystack.len) return null;
+
+    const len = haystack.len - start;
+
+    var mask_bit_vec: @Vector(len, u1) = [_]u1{@intFromBool(true)} ** len;
+    @setEvalBranchQuota(@min(std.math.maxInt(u32), (excluded.len + 1) * 100));
+    for (excluded) |ex| {
+        const ex_vec: @Vector(len, T) = @splat(ex);
+        const match_bits: @Vector(len, u1) = @bitCast(haystack[start..].* != ex_vec);
+        mask_bit_vec &= match_bits;
+    }
+
+    const mask: std.meta.Int(.unsigned, len) = @bitCast(mask_bit_vec);
+    const idx: comptime_int = @ctz(mask);
+    return if (idx != haystack.len) start + idx else null;
 }
 
 fn testTokenizer(
