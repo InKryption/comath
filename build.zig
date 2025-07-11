@@ -22,7 +22,7 @@ pub fn build(b: *Build) void {
     }
 
     const comath_mod = b.addModule("comath", .{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/comath.zig"),
         .target = maybe_target,
     });
     const util_mod = b.createModule(.{

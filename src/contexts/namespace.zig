@@ -1,5 +1,5 @@
 const std = @import("std");
-const cm = @import("../main.zig");
+const cm = @import("../comath.zig");
 
 pub const Access = enum {
     as_type,

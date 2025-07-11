@@ -1,5 +1,5 @@
 const std = @import("std");
-const cm = @import("../main.zig");
+const cm = @import("../comath.zig");
 const util = @import("util");
 
 const UnOp = enum { @"-" };

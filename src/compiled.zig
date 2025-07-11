@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const cm = @import("main.zig");
+const cm = @import("comath.zig");
 const parse = @import("parse.zig");
 const Tokenizer = @import("Tokenizer.zig");
 

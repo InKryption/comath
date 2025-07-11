@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const cm = @import("main.zig");
+const cm = @import("comath.zig");
 const util = @import("util");
 
 const Tokenizer = @import("Tokenizer.zig");
