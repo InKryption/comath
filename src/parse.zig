@@ -6,8 +6,8 @@ const util = @import("util");
 
 const Tokenizer = @import("Tokenizer.zig");
 
-const MatchOpFn = fn (comptime str: []const u8) callconv(.Inline) bool;
-const OrderBinOpFn = fn (comptime lhs: []const u8, comptime rhs: []const u8) callconv(.Inline) ?cm.Order;
+const MatchOpFn = fn (comptime str: []const u8) callconv(.@"inline") bool;
+const OrderBinOpFn = fn (comptime lhs: []const u8, comptime rhs: []const u8) callconv(.@"inline") ?cm.Order;
 
 pub fn parseExpr(
     comptime expr: []const u8,
